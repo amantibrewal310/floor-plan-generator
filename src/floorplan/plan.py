@@ -79,6 +79,22 @@ def estimate_floor_ceiling(z: np.ndarray, bin_size=0.01) -> tuple[float, float |
     return floor, ceiling
 
 
+def layer(z: np.ndarray, lowest=True, frac=0.25, bin_size=0.02) -> float | None:
+    """Height of the lowest (or highest) horizontal layer holding at least `frac` of the biggest
+    one. For points of horizontal surfaces only, where the floor is the lowest big layer (beds and
+    tables sit above it) and the ceiling the highest (a bulkhead hangs below it)."""
+    z = np.asarray(z)
+    if len(z) < 200:
+        return None
+    lo, hi = np.percentile(z, [0.2, 99.8])
+    hist, edges = np.histogram(z, np.arange(lo - 0.05, hi + 0.05, bin_size))
+    hist = np.convolve(hist, [1, 2, 1], "same")
+    peaks = np.flatnonzero((hist >= frac * hist.max()) & (hist >= np.roll(hist, 1)) & (hist >= np.roll(hist, -1)))
+    i = peaks[0] if lowest else peaks[-1]
+    c = (edges[i] + edges[i + 1]) / 2
+    return float(np.median(z[np.abs(z - c) < 0.03]))
+
+
 def dominant_angle(segments) -> float:
     """Length-weighted mean edge direction modulo 90 degrees, in (-45, 45] degrees."""
     acc = 0j
@@ -90,13 +106,18 @@ def dominant_angle(segments) -> float:
 
 def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: float | None = None,
                   res=0.02, min_area=1.5, seeds: np.ndarray | None = None, open_fallback=False,
-                  walked=False) -> list[Room]:
+                  walked=False, ceiling_pts: np.ndarray | None = None) -> list[Room]:
     """`seeds`: optional points known to be inside rooms (camera positions); rooms that
     contain none are dropped. `open_fallback`: the points are one room, so if its walls were not
     captured all the way round, return the rectangle they span instead of failing. `walked`: the
-    seeds are a walkthrough's camera path, so walked space no room covers (a hallway) is a room too."""
+    seeds are a walkthrough's camera path, so walked space no room covers (a hallway) is a room too.
+    `ceiling_pts`: points of surfaces seen from below (photo and video tiers). Each room's ceiling
+    is then the highest layer of them above it, instead of a guess from all points' heights."""
     points = np.asarray(points, float)
     points = points[np.isfinite(points).all(1)]
+    if ceiling_z is None and ceiling_pts is not None and len(ceiling_pts):
+        # the wall band stops under the lowest ceiling anywhere (a hall bulkhead, say)
+        ceiling_z = layer(ceiling_pts[:, 2], lowest=True)
     if floor_z is None or ceiling_z is None:
         f, c = estimate_floor_ceiling(points[:, 2])
         floor_z = f if floor_z is None else floor_z
@@ -186,7 +207,8 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
             poly = rough  # an open room's unseen sides have nothing to refit to
         if poly is None or len(poly) < 3:
             continue
-        room = Room(poly, height=_room_height(poly, P, height))
+        room = Room(poly, height=_room_height(poly, P, height, None if ceiling_pts is None
+                                              else ceiling_pts - [0, 0, floor_z]))
         if best is None:
             room.extra["unclosed"] = True
         room.doors, room.windows = _find_openings(room, wall_pts)
@@ -464,8 +486,9 @@ def _find_openings(room: Room, pts: np.ndarray, min_w=0.6, max_w=2.0, min_win=0.
     return doors, windows
 
 
-def _room_height(poly, P, fallback):
-    """Ceiling height from the points above this room only (rooms can differ)."""
+def _room_height(poly, P, fallback, ceiling_pts=None):
+    """Ceiling height from the points above this room only (rooms can differ). With
+    `ceiling_pts` (surfaces seen from below, floor at 0), the highest layer of those."""
     import cv2 as _cv2
     lo = poly.min(0)
     res = 0.05
@@ -473,10 +496,14 @@ def _room_height(poly, P, fallback):
     m = np.zeros(shape, np.uint8)
     _cv2.fillPoly(m, [np.round((poly - lo) / res).astype(np.int32)], 1)
     m = _cv2.erode(m, np.ones((5, 5), np.uint8))  # stay 10 cm clear of the walls
-    ij = np.floor((P[:, :2] - lo) / res).astype(int)
+    Q = P if ceiling_pts is None else ceiling_pts
+    ij = np.floor((Q[:, :2] - lo) / res).astype(int)
     ok = (ij >= 0).all(1) & (ij[:, 0] < shape[1]) & (ij[:, 1] < shape[0])
     ok[ok] = m[ij[ok, 1], ij[ok, 0]] > 0
-    z = P[ok, 2]
+    z = Q[ok, 2]
+    if ceiling_pts is not None:
+        c = layer(z[z > 1.8], lowest=False)  # nothing under 1.8 m is a ceiling
+        return c
     if len(z) < 200:
         return fallback
     f, c = estimate_floor_ceiling(z)

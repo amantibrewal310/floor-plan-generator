@@ -31,15 +31,29 @@ def _frames_capture(name, frames, drift_correction, level=False, one_room=False,
                     images=None, image_views=(), view_names=()) -> Capture:
     """Per-frame (points z up, camera, pixel uv) in capture order -> rooms: correct accumulated
     drift, extract rooms, then place damage found in `images()` (RGB of `image_views`)."""
-    frames, log = drift.correct(frames, enabled=drift_correction)
+    # photo/video frames carry which way each point's surface faces (recon.view_points): the floor
+    # is the lowest big layer of surfaces seen from above. A learned point cloud of a furnished
+    # room is too spread out for the height histogram alone, which picks the bed tops.
+    facing = len(frames[0]) > 3
+    floor = None
+    if facing:
+        up = np.concatenate([f[0][f[3] == 1, 2] for f in frames])
+        floor = plan.layer(up, lowest=True)
+    frames, log = drift.correct(frames, enabled=drift_correction, floor=floor)
     P = np.concatenate([f[0] for f in frames])
     cams = np.array([f[1] for f in frames])
     R = np.eye(3)
     if level:
         P, R = lidar.level(P)
         cams = cams @ R.T
-    floor, _ = plan.estimate_floor_ceiling(P[:, 2])
-    rooms = plan.extract_rooms(P, floor_z=floor, seeds=cams, open_fallback=one_room, walked=not one_room)
+    ceiling_pts = None
+    if facing:
+        lab = np.concatenate([f[3] for f in frames])
+        ceiling_pts = P[lab == 2]
+    if floor is None:
+        floor, _ = plan.estimate_floor_ceiling(P[:, 2])
+    rooms = plan.extract_rooms(P, floor_z=floor, seeds=cams, open_fallback=one_room, walked=not one_room,
+                               ceiling_pts=ceiling_pts)
     if one_room:
         rooms = [max(rooms, key=lambda r: r.area)]
         rooms[0].name = name
@@ -71,21 +85,51 @@ def image_capture(name: str, images: list[Path], marker_size: float | None, one_
         m = recon.marker_scale(pred, marker_size)
         if m:
             scale, how = m[0], f"ArUco marker ({m[1]} sightings)"
-    frames = []
+    frames, closeups = [], []
     for v in range(len(images)):
-        X, uv = recon.view_points(pred, R, v)
-        frames.append((X * scale, pred.poses[v, :3, 3] @ R.T * scale, uv))
+        X, uv, facing = recon.view_points(pred, R, v)
+        cam = pred.poses[v, :3, 3] @ R.T * scale
+        X = X * scale
+        if len(X) and np.median(np.linalg.norm(X - cam, axis=1)) < CLOSEUP_M:
+            # a view filled by one surface a few tens of cm away gives the model little to place
+            # it by, and its walls land in the wrong spot; it adds nothing to the layout anyway
+            closeups.append(Path(images[v]).name)
+            X, uv, facing = X[:0], uv[:0], facing[:0]
+        frames.append((X, cam, uv, facing))
     # a photo folder is a handful of unordered stills: there is no trajectory to correct
     cap = _frames_capture(name, frames, drift_correction and not one_room, one_room=one_room,
                           # the model's own (cropped, resized) images: their pixels are the points' uv
                           images=(lambda: list(pred.img)) if find_damage else None,
                           image_views=range(len(images)), view_names=[Path(p).name for p in images])
-    cap.stats.update({"images": len(images), "scale_from": how, "scale": round(scale, 4)})
+    cap.stats.update({"images": len(images), "scale_from": how, "scale": round(scale, 4),
+                      "closeups_ignored": len(closeups)})
+    advice = capture_advice(cap, len(images), len(closeups))
+    if advice:
+        cap.stats["warning"] = "; ".join(filter(None, [cap.stats.get("warning"), advice]))
     if len({recon.is_portrait(p) for p in images}) > 1:
         mixed = (f"{name}: portrait and landscape photos mixed; the model crops every image "
                  "to one shape, so shoot a room all in landscape")
         cap.stats["warning"] = "; ".join(filter(None, [cap.stats.get("warning"), mixed]))
     return cap
+
+
+CLOSEUP_M = 1.0  # median depth of a view below this: a close-up
+
+
+def capture_advice(cap, n_views, n_closeups) -> str:
+    """What to do differently next time, from what the capture shows."""
+    tips = []
+    if n_closeups > 0.25 * n_views:
+        tips.append(f"{n_closeups} of {n_views} views were close-ups (under {CLOSEUP_M:.0f} m), so they were "
+                    "ignored: aim across the room at the far wall")
+    if cap.rooms and all(r.height is None for r in cap.rooms):
+        tips.append("the ceiling was never in view: keep the line where wall meets ceiling in the frame")
+    weak = [r for r in cap.rooms if r.wall_support and
+            np.mean([c for c, _ in r.wall_support]) < 0.5]
+    if weak:
+        tips.append(f"{len(weak)} room(s) had less than half their walls filmed: walk all the way round, "
+                    "1 m from the walls")
+    return "; ".join(tips)
 
 
 def photo_capture(folder: Path, marker_size=None, find_damage=True) -> Capture:

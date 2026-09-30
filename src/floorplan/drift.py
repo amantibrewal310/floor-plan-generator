@@ -44,7 +44,7 @@ def _walls(P, floor):
     return P[(P[:, 2] > floor + 0.5) & (P[:, 2] < floor + 2.0), :2]
 
 
-def correct(frames, enabled=True, chunk_m=1.0, max_shift=0.05, res=0.01):
+def correct(frames, enabled=True, chunk_m=1.0, max_shift=0.05, res=0.01, floor=None):
     """frames: [(points (N,3) z up, camera centre (3,), *extra)] in capture order; extra items
     (pixel coordinates, frame ids) are passed through untouched.
     Returns corrected frames and a list of per-chunk corrections (for the report)."""
@@ -52,7 +52,7 @@ def correct(frames, enabled=True, chunk_m=1.0, max_shift=0.05, res=0.01):
         return frames, []
     cams = np.array([f[1] for f in frames])
     allz = np.concatenate([f[0][::20, 2] for f in frames])
-    floor0, _ = estimate_floor_ceiling(allz)
+    floor0 = floor if floor is not None else estimate_floor_ceiling(allz)[0]
     theta0 = None
     map_pts = []
     out, log = [], []

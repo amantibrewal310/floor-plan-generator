@@ -244,3 +244,18 @@ def test_damage_seen_once_needs_a_confident_detector():
     data = export.to_dict([room], {"stitching": [], "captures": []}, tier="video")
     damage.regions([room], data, "video")
     assert data["damage"] == [] and data["scope"] == []
+
+
+def test_floor_is_lowest_layer_even_when_furniture_tops_outnumber_it():
+    """Real video of a furnished room: more up-facing points on bed and sofa tops than on the
+    floor. The floor is still the lowest big layer, not the biggest one."""
+    from floorplan.plan import layer
+    rng = np.random.default_rng(0)
+    floor = rng.normal(0.00, 0.01, 40_000)
+    bed = rng.normal(0.52, 0.01, 60_000)
+    table = rng.normal(0.75, 0.01, 20_000)
+    noise = rng.uniform(-0.3, 1.2, 3_000)
+    z = np.concatenate([floor, bed, table, noise]) - 1.3
+    assert abs(layer(z, lowest=True) - (-1.3)) < 0.01
+    ceiling = np.concatenate([rng.normal(2.85, 0.01, 5_000), rng.normal(2.30, 0.01, 4_000)])  # + a bulkhead
+    assert abs(layer(ceiling, lowest=False) - 2.85) < 0.01

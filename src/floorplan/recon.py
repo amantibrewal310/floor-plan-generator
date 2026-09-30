@@ -167,15 +167,27 @@ def marker_scale(pred: Prediction, marker_size: float) -> tuple[float, int] | No
     return marker_size / float(np.median(sides)), len(sides)
 
 
-def view_points(pred: Prediction, R: np.ndarray, v: int, conf_pct=10, stride=2):
-    """Points of view v rotated by R (z up), and the pixel each came from, normalised to 0..1."""
+def view_points(pred: Prediction, R: np.ndarray, v: int, conf_pct=10, stride=2, tol_deg=15):
+    """Points of view v rotated by R (z up), the pixel each came from (normalised to 0..1), and
+    which way its surface faces: 1 up (floor, bed, table top), 2 down (ceiling), 0 otherwise.
+
+    A normal taken from the image grid points away from the camera, so a floor seen from above
+    has a normal pointing down, and a ceiling seen from below one pointing up."""
     thr = np.percentile(pred.conf[pred.mask], conf_pct)
     ok = pred.mask[v] & (pred.conf[v] >= thr)
     ok[1::stride] = False
     ok[:, 1::stride] = False
+    ok[0, :] = ok[-1, :] = False  # the grid normal needs both neighbours
+    ok[:, 0] = ok[:, -1] = False
+    G = pred.pts[v]
+    n = np.zeros_like(G)
+    n[1:-1, 1:-1] = np.cross(G[1:-1, 2:] - G[1:-1, :-2], G[2:, 1:-1] - G[:-2, 1:-1])
+    nz = (n[ok] @ R[2]) / (np.linalg.norm(n[ok], axis=1) + 1e-12)
+    c = np.cos(np.radians(tol_deg))
+    facing = np.where(nz < -c, 1, np.where(nz > c, 2, 0)).astype(np.uint8)
     y, x = np.nonzero(ok)
     h, w = ok.shape
-    return pred.pts[v][ok] @ R.T, np.column_stack([(x + 0.5) / w, (y + 0.5) / h])
+    return G[ok] @ R.T, np.column_stack([(x + 0.5) / w, (y + 0.5) / h]), facing
 
 
 def metric_points(pred: Prediction, R: np.ndarray, views=None, max_points=1_500_000,
