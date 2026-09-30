@@ -205,8 +205,13 @@ def _enclose(occ, res, line, radius, diagonal, min_area):
     if line:  # thicken first: the two sides of a doorway may sit a cell or two apart
         n = int(line / res)
         walls = cv2.dilate(walls, np.ones((5, 5), np.uint8))
-        walls |= close(walls, np.ones((1, n), np.uint8))
-        walls |= close(walls, np.ones((n, 1), np.uint8))
+        # A doorway is a gap within one wall; a hallway is the space between two parallel walls,
+        # often narrower than `line`. A closing may bridge from any wall cell except those that
+        # clearly belong to a wall running the other way, so it never joins a hallway's two
+        # walls across it but still spans a door between stubs, jambs or a corner.
+        along_row, along_col = _elongated(walls, int(0.5 / res))
+        walls |= close(walls & ~along_col, np.ones((1, n), np.uint8))
+        walls |= close(walls & ~along_row, np.ones((n, 1), np.uint8))
         if diagonal:
             d = np.eye(int(min(line, 0.8) / res * 0.7), dtype=np.uint8)
             walls |= close(walls, d)
@@ -216,6 +221,25 @@ def _enclose(occ, res, line, radius, diagonal, min_area):
     cv2.floodFill(flood, None, (0, 0), 2)
     n, labels, stats, _ = cv2.connectedComponentsWithStats((flood == 1).astype(np.uint8), connectivity=4)
     return labels, [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] * res * res >= min_area]
+
+
+def _elongated(mask, min_len):
+    """Cells of pieces running along the rows / along the columns: a run at least `min_len`
+    long in that direction and three times longer than it is thick."""
+    h, v = _run_lengths(mask), _run_lengths(mask.T).T
+    return (h >= min_len) & (h >= 3 * v), (v >= min_len) & (v >= 3 * h)
+
+
+def _run_lengths(mask):
+    """For every set cell, the length of the run of set cells it belongs to along its row."""
+    m = mask > 0
+    rows, cols = m.shape
+    edge = np.diff(np.pad(m, ((0, 0), (1, 1))).astype(np.int8), axis=1)
+    (r0, c0), (_, c1) = np.nonzero(edge == 1), np.nonzero(edge == -1)
+    acc = np.zeros((rows, cols + 1), np.int32)
+    np.add.at(acc, (r0, c0), c1 - c0)
+    np.add.at(acc, (r0, c1), -(c1 - c0))
+    return np.cumsum(acc, axis=1)[:, :cols] * m
 
 
 def _open_rect(xy, theta, pct=2):
