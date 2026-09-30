@@ -95,6 +95,27 @@ def layer(z: np.ndarray, lowest=True, frac=0.25, bin_size=0.02) -> float | None:
     return float(np.median(z[np.abs(z - c) < 0.03]))
 
 
+def floor_from_views(zs: list[np.ndarray], min_views=2, min_pts=150, bin_size=0.02) -> float | None:
+    """Floor height from the up-facing points of each view: the lowest horizontal layer that at
+    least `min_views` views agree on. Its size doesn't matter: in a bedroom the bed top can hold
+    twenty times more points than the strip of floor around it. Stray points below the floor
+    (reflections, noise) rarely line up across two viewpoints."""
+    allz = np.concatenate([z for z in zs if len(z)]) if any(len(z) for z in zs) else np.zeros(0)
+    if len(allz) < min_pts:
+        return None
+    need = min(min_views, sum(len(z) >= min_pts for z in zs)) or 1
+    lo, hi = np.percentile(allz, [0.1, 99.9])
+    edges = np.arange(lo - 0.05, hi + 0.05, bin_size)
+    counts = np.array([np.convolve(np.histogram(z, edges)[0], [1, 1, 1], "same") for z in zs])
+    ok = (counts >= min_pts // 3).sum(0) >= need  # views with a real patch at this height
+    total = counts.sum(0)
+    peaks = np.flatnonzero(ok & (total >= min_pts) & (total >= np.roll(total, 1)) & (total >= np.roll(total, -1)))
+    if not len(peaks):
+        return layer(allz, lowest=True)
+    c = (edges[peaks[0]] + edges[peaks[0] + 1]) / 2
+    return float(np.median(allz[np.abs(allz - c) < 0.03]))
+
+
 def dominant_angle(segments) -> float:
     """Length-weighted mean edge direction modulo 90 degrees, in (-45, 45] degrees."""
     acc = 0j

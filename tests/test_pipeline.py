@@ -259,3 +259,17 @@ def test_floor_is_lowest_layer_even_when_furniture_tops_outnumber_it():
     assert abs(layer(z, lowest=True) - (-1.3)) < 0.01
     ceiling = np.concatenate([rng.normal(2.85, 0.01, 5_000), rng.normal(2.30, 0.01, 4_000)])  # + a bulkhead
     assert abs(layer(ceiling, lowest=False) - 2.85) < 0.01
+
+
+def test_floor_found_when_a_bed_hides_most_of_it():
+    """Bedroom photos: the bed top holds 20x the points of the floor strip around it, but only the
+    floor lies below it in several views."""
+    from floorplan.plan import floor_from_views
+    rng = np.random.default_rng(1)
+    views = []
+    for k in range(8):
+        bed = rng.normal(-0.77, 0.01, 6000)
+        floor = rng.normal(-1.30, 0.01, 400 if k in (0, 2, 3, 4) else 0)
+        views.append(np.concatenate([bed, floor]))
+    views.append(rng.normal(-1.9, 0.01, 200))  # one view with a reflection below the floor
+    assert abs(floor_from_views(views) - (-1.30)) < 0.01

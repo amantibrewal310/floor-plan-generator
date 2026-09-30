@@ -32,13 +32,13 @@ def _frames_capture(name, frames, drift_correction, level=False, one_room=False,
     """Per-frame (points z up, camera, pixel uv) in capture order -> rooms: correct accumulated
     drift, extract rooms, then place damage found in `images()` (RGB of `image_views`)."""
     # photo/video frames carry which way each point's surface faces (recon.view_points): the floor
-    # is the lowest big layer of surfaces seen from above. A learned point cloud of a furnished
-    # room is too spread out for the height histogram alone, which picks the bed tops.
+    # is the lowest layer of surfaces seen from above that two views agree on. A learned point
+    # cloud of a furnished room is too spread out for the height histogram alone, which picks the
+    # bed tops, and a bed can hide all but a strip of the floor.
     facing = len(frames[0]) > 3
     floor = None
     if facing:
-        up = np.concatenate([f[0][f[3] == 1, 2] for f in frames])
-        floor = plan.layer(up, lowest=True)
+        floor = plan.floor_from_views([f[0][f[3] == 1, 2] for f in frames])
     frames, log = drift.correct(frames, enabled=drift_correction, floor=floor)
     P = np.concatenate([f[0] for f in frames])
     cams = np.array([f[1] for f in frames])
