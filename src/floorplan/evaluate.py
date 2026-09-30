@@ -161,6 +161,33 @@ def score(plan: dict, gt: dict) -> dict:
             "areas": areas, "missing_rooms": missing_rooms}
 
 
+def walk_check(cap) -> dict:
+    """Truth-free check of a walkthrough capture. The phone never leaves the home, so every
+    camera position should fall inside some room (hallways included), and the rooms should link
+    up through their doorways into one plan. Needs no tape: it runs on any walkthrough."""
+    import cv2
+
+    from .export import to_dict
+    if cap.path is None or len(cap.path) < 2:
+        raise ValueError(f"{cap.source}: not a walkthrough (no camera path); use a Stray folder or a video")
+    data = to_dict(cap.rooms)
+    C = np.asarray(cap.path)[:, :2]
+    polys = [r.polygon.astype(np.float32) for r in cap.rooms]
+    inside = np.array([any(cv2.pointPolygonTest(q, (float(x), float(y)), False) >= 0 for q in polys) for x, y in C])
+    step = np.r_[0.0, np.linalg.norm(np.diff(C, axis=0), axis=1)]  # metres walked into each frame
+    parent = {r["id"]: r["id"] for r in data["rooms"]}
+
+    def root(a):
+        while parent[a] != a:
+            a = parent[a]
+        return a
+    for link in data["adjacency"]:
+        parent[root(link["rooms"][0])] = root(link["rooms"][1])
+    return {"capture": cap.source, "rooms": len(cap.rooms), "walk_m": round(float(step.sum()), 1),
+            "walk_inside_pct": round(100 * float(step[inside].sum() / max(step.sum(), 1e-9)), 1),
+            "adjacent_pairs": len(data["adjacency"]), "components": len({root(k) for k in parent})}
+
+
 def repeatability(a: dict, b: dict) -> dict:
     """Two captures of the same room(s) at the same tier: per-wall and ceiling agreement."""
     rows = []

@@ -79,6 +79,15 @@ def test_stray_lidar_drift_correction(tmp_path):
     assert off["corner_rmse_cm"] > 2 * m["corner_rmse_cm"], (off, m)
 
 
+def test_walkcheck_on_a_synthetic_walkthrough(tmp_path):
+    """Two rooms joined by a door, walked through: the walk stays inside rooms and the rooms link."""
+    from floorplan.evaluate import walk_check
+    from floorplan.pipeline import lidar_capture
+    sc = synth.make_scene("apartment")
+    w = walk_check(lidar_capture(synth.write_stray(sc, tmp_path / "walk"), find_damage=False))
+    assert w["rooms"] == 2 and w["walk_inside_pct"] >= 95 and w["components"] == 1, w
+
+
 def test_output_matches_published_schema(tmp_path):
     import jsonschema
     from pathlib import Path

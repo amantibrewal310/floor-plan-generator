@@ -22,6 +22,7 @@ class Capture:
     source: str
     rooms: list[Room]
     markers: dict[int, tuple[np.ndarray, float]] = field(default_factory=dict)  # id -> (xy, yaw)
+    path: np.ndarray | None = None  # (N, 3) camera positions of a walkthrough, same frame as rooms
 
 
 def _rot(a):

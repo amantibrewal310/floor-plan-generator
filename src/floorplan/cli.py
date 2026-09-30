@@ -46,6 +46,12 @@ def main(argv=None):
     p.add_argument("a", type=Path)
     p.add_argument("b", type=Path)
 
+    p = sub.add_parser("walkcheck", help="truth-free check of walkthroughs: share of the walk inside a "
+                                         "room, and whether the rooms link into one plan")
+    p.add_argument("inputs", nargs="+", type=Path, help="Stray Scanner folders (lidar) or videos (--tier video)")
+    p.add_argument("--tier", choices=["lidar", "video"], default="lidar")
+    p.add_argument("--no-drift-correction", action="store_true")
+
     p = sub.add_parser("bench", help="run a real-capture benchmark manifest and write the report")
     p.add_argument("manifest", type=Path)
     p.add_argument("-o", "--out", type=Path)
@@ -104,6 +110,17 @@ def main(argv=None):
             print(f"{r['room']:>12} {r['wall']:>8}: {r['a'] * 100:7.1f} vs {r['b'] * 100:7.1f} cm  "
                   f"diff {r['diff_cm']:.2f} cm  {'pass' if r['pass'] else 'FAIL'}")
         print("repeatability gate:", "PASS" if res["pass"] else "FAIL")
+    elif a.cmd == "walkcheck":
+        from .evaluate import walk_check
+        from .pipeline import lidar_capture, video_capture
+        print("capture                 rooms  walk m  inside %  adjacent pairs  components")
+        for src in a.inputs:
+            cap = (lidar_capture(src, drift_correction=not a.no_drift_correction, find_damage=False)
+                   if a.tier == "lidar" else
+                   video_capture(src, drift_correction=not a.no_drift_correction, find_damage=False))
+            w = walk_check(cap)
+            print(f"{w['capture']:22s}  {w['rooms']:5d}  {w['walk_m']:6.1f}  {w['walk_inside_pct']:8.1f}  "
+                  f"{w['adjacent_pairs']:14d}  {w['components']:10d}")
     elif a.cmd == "bench":
         from .bench import run_bench
         run_bench(a.manifest, a.out, damage=not a.no_damage)

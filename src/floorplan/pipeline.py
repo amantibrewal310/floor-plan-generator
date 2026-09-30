@@ -43,7 +43,7 @@ def _frames_capture(name, frames, drift_correction, level=False, one_room=False,
     if one_room:
         rooms = [max(rooms, key=lambda r: r.area)]
         rooms[0].name = name
-    cap = Capture(name, rooms)
+    cap = Capture(name, rooms, path=cams)
     cap.stats = {"source": name, "frames": len(frames), "drift_correction": drift_correction}
     if any(r.extra.get("unclosed") for r in rooms):
         cap.stats["warning"] = (f"{name}: the photos do not show every wall, so the room is the rectangle "
