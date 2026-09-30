@@ -46,6 +46,11 @@ def main(argv=None):
     p.add_argument("a", type=Path)
     p.add_argument("b", type=Path)
 
+    p = sub.add_parser("bench", help="run a real-capture benchmark manifest and write the report")
+    p.add_argument("manifest", type=Path)
+    p.add_argument("-o", "--out", type=Path)
+    p.add_argument("--no-damage", action="store_true")
+
     p = sub.add_parser("markers", help="write printable ArUco markers (A4, 300 dpi)")
     p.add_argument("-o", "--out", type=Path, default=Path("markers"))
     p.add_argument("--size-mm", type=int, default=180)
@@ -85,11 +90,11 @@ def main(argv=None):
         _summary(result)
         print(f"\nwrote {a.out / 'plan.svg'} and {a.out / 'plan.json'}")
     elif a.cmd == "score":
-        from .evaluate import load, score
+        from .evaluate import load, score, to_json
         res = score(load(a.plan), load(a.truth))
         if a.out:
-            a.out.write_text(json.dumps(res, indent=2))
-        print(json.dumps(res["summary"], indent=2))
+            a.out.write_text(to_json(res))
+        print(to_json(res["summary"]))
     elif a.cmd == "repeat":
         from .evaluate import load, repeatability
         res = repeatability(load(a.a), load(a.b))
@@ -97,6 +102,9 @@ def main(argv=None):
             print(f"{r['room']:>12} {r['wall']:>8}: {r['a'] * 100:7.1f} vs {r['b'] * 100:7.1f} cm  "
                   f"diff {r['diff_cm']:.2f} cm  {'pass' if r['pass'] else 'FAIL'}")
         print("repeatability gate:", "PASS" if res["pass"] else "FAIL")
+    elif a.cmd == "bench":
+        from .bench import run_bench
+        run_bench(a.manifest, a.out, damage=not a.no_damage)
     elif a.cmd == "markers":
         from .media import write_marker_sheet
         write_marker_sheet(a.out, range(a.count), a.size_mm)

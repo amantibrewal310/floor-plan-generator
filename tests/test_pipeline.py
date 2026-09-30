@@ -124,3 +124,29 @@ def test_score_against_tape_truth_and_repeatability(tmp_path):
     assert s["ceiling_gate"] and s["openings_pass_pct"] == 100.0, s
     assert s["interval_coverage_pct"] >= 80, s
     assert repeatability(a, b)["pass"]
+
+
+def test_bench_manifest_end_to_end(tmp_path):
+    from floorplan.bench import run_bench
+    sc = synth.make_scene("apartment")
+    synth.write_stray(sc, tmp_path / "raw" / "walk", drift_deg_per_m=0.8)
+    for i in (0, 1):
+        synth.write_lidar_ply(sc, tmp_path / "raw" / f"scan{i}.ply", seed=i)
+    truth = synth.tape_truth(sc)
+    (tmp_path / "truth.json").write_text(json.dumps(truth))
+    theirs = json.loads(json.dumps(truth))
+    for r in theirs["rooms"]:
+        r["walls_m"] = [w + 0.03 for w in r["walls_m"]]  # an app that is 3 cm long everywhere
+    (tmp_path / "app.json").write_text(json.dumps(theirs))
+    (tmp_path / "manifest.json").write_text(json.dumps({"captures": [
+        {"id": "walk", "tier": "lidar", "inputs": ["raw/walk"], "truth": "truth.json", "ablate_drift": True},
+        {"id": "scan0", "tier": "lidar", "inputs": ["raw/scan0.ply"], "truth": "truth.json",
+         "competitor": {"app": "SomeApp 1.0", "measured": "app.json"}},
+        {"id": "scan1", "tier": "lidar", "inputs": ["raw/scan1.ply"], "truth": "truth.json", "repeat_of": "scan0"},
+    ]}))
+    res = run_bench(tmp_path / "manifest.json", damage=False)
+    report = (tmp_path / "out" / "report.md").read_text()
+    for section in ("Gates per capture", "Repeatability", "Drift ablation", "Head-to-head"):
+        assert section in report
+    assert res["scan0"]["competitor"]["beat_or_tie_pct"] >= 70
+    assert res["scan1"]["repeat"]["pass"]

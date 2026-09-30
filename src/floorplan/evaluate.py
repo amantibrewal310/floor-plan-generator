@@ -190,5 +190,10 @@ def _max(errs):
     return round(100 * float(np.max(e)), 2) if e else None
 
 
+def to_json(obj) -> str:
+    """json.dumps that accepts numpy scalars."""
+    return json.dumps(obj, indent=2, default=lambda o: o.item() if hasattr(o, "item") else str(o))
+
+
 def load(path: Path) -> dict:
     return json.loads(Path(path).read_text())
