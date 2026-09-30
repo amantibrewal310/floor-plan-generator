@@ -39,7 +39,7 @@ def _frames_capture(name, frames, drift_correction, level=False, one_room=False,
         P, R = lidar.level(P)
         cams = cams @ R.T
     floor, _ = plan.estimate_floor_ceiling(P[:, 2])
-    rooms = plan.extract_rooms(P, floor_z=floor, seeds=cams, open_fallback=one_room)
+    rooms = plan.extract_rooms(P, floor_z=floor, seeds=cams, open_fallback=one_room, walked=not one_room)
     if one_room:
         rooms = [max(rooms, key=lambda r: r.area)]
         rooms[0].name = name

@@ -89,10 +89,12 @@ def dominant_angle(segments) -> float:
 
 
 def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: float | None = None,
-                  res=0.02, min_area=1.5, seeds: np.ndarray | None = None, open_fallback=False) -> list[Room]:
+                  res=0.02, min_area=1.5, seeds: np.ndarray | None = None, open_fallback=False,
+                  walked=False) -> list[Room]:
     """`seeds`: optional points known to be inside rooms (camera positions); rooms that
     contain none are dropped. `open_fallback`: the points are one room, so if its walls were not
-    captured all the way round, return the rectangle they span instead of failing."""
+    captured all the way round, return the rectangle they span instead of failing. `walked`: the
+    seeds are a walkthrough's camera path, so walked space no room covers (a hallway) is a room too."""
     points = np.asarray(points, float)
     points = points[np.isfinite(points).all(1)]
     if floor_z is None or ceiling_z is None:
@@ -149,7 +151,7 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
                     comps = [i for i in comps if i in hit]
                 area = sum((labels == i).sum() for i in comps) * res * res
                 if area > best_area * 1.02:
-                    best, best_area = (labels, comps), area
+                    best, best_area = (labels, comps, (line, radius, diagonal)), area
         if best is not None:
             break
     polys = []
@@ -159,18 +161,22 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
         polys.append(_open_rect(upper[:, :2], theta0))
         labels, comps = None, []
     else:
-        labels, comps = best
-    for i in comps:
-        mask = (labels == i).astype(np.uint8)
-        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        c = max(cnts, key=cv2.contourArea)
-        approx = cv2.approxPolyDP(c, 0.08 / res, True)[:, 0, :].astype(float)
-        poly = ((approx + 0.5) * res + origin) @ Rm  # back to the input frame
-        if _signed_area(poly) < 0:
-            poly = poly[::-1]
-        polys.append(poly)
+        labels, comps, setting = best
+        regions = [labels == i for i in comps]
+        if walked and seed_ij is not None:
+            regions += _walked_spaces(occ, res, setting, np.isin(labels, comps), seed_ij, min_area)
+        n_enclosed = len(comps)
+        for mask in regions:
+            cnts, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            c = max(cnts, key=cv2.contourArea)
+            approx = cv2.approxPolyDP(c, 0.08 / res, True)[:, 0, :].astype(float)
+            poly = ((approx + 0.5) * res + origin) @ Rm  # back to the input frame
+            if _signed_area(poly) < 0:
+                poly = poly[::-1]
+            polys.append(poly)
 
-    theta = _refine_theta(polys, upper[:, :2], theta0)
+    # the wall directions come from the enclosed rooms; walked spaces are ragged and follow them
+    theta = _refine_theta(polys[:n_enclosed] if best is not None else polys, upper[:, :2], theta0)
     wall_pts = P[(P[:, 2] > 0.1) & (P[:, 2] < top)]
     rooms = []
     for poly in polys:
@@ -194,6 +200,35 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
 
 def _enclose(occ, res, line, radius, diagonal, min_area):
     """Close gaps in the wall mask, flood-fill from outside: (labels, enclosed component ids)."""
+    flood = _flood(occ, res, line, radius, diagonal)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats((flood == 1).astype(np.uint8), connectivity=4)
+    return labels, [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] * res * res >= min_area]
+
+
+def _walked_spaces(occ, res, setting, rooms, seed_ij, min_area):
+    """Walked space that no room covers, as extra room masks.
+
+    Closing doorways also bridges across a hallway about a metre wide (its two walls are a
+    doorway's width apart), and in a hallway or a kitchen the clutter fills whatever is left, so
+    those spaces never enclose. Without closing they are open, but they leak out through the
+    doorways they connect. Take the space that is free in the scan itself, inside the home (sealed
+    from the outside by the door-closing setting that found the rooms) and not already a room;
+    keep the pieces the phone walked through."""
+    disk = lambda m: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * int(m / res) + 1,) * 2)
+    home = _flood(occ, res, *setting) != 2
+    free = _flood(occ, res, 0.0, 0.06, False) != 0
+    near_room = cv2.dilate(rooms.astype(np.uint8), disk(0.15)) > 0  # the rim between a room and its walls
+    cand = (home & free & ~near_room).astype(np.uint8)
+    cand = cv2.morphologyEx(cand, cv2.MORPH_OPEN, disk(0.15))  # slivers narrower than 0.3 m are not walkable
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(cand, connectivity=4)
+    h, w = labels.shape
+    ok = (seed_ij >= 0).all(1) & (seed_ij[:, 0] < w) & (seed_ij[:, 1] < h)
+    walked = set(labels[seed_ij[ok, 1], seed_ij[ok, 0]].tolist()) - {0}
+    return [labels == i for i in sorted(walked) if stats[i, cv2.CC_STAT_AREA] * res * res >= min_area]
+
+
+def _flood(occ, res, line, radius, diagonal):
+    """Close gaps in the wall mask and flood-fill from outside: 0 wall, 2 outside, 1 enclosed."""
     def close(img, kernel):
         # Beyond the grid is empty. OpenCV's default erosion border counts it as wall, which
         # turns the corner seed pixel of the flood fill into wall under a kernel that reaches
@@ -205,13 +240,8 @@ def _enclose(occ, res, line, radius, diagonal, min_area):
     if line:  # thicken first: the two sides of a doorway may sit a cell or two apart
         n = int(line / res)
         walls = cv2.dilate(walls, np.ones((5, 5), np.uint8))
-        # A doorway is a gap within one wall; a hallway is the space between two parallel walls,
-        # often narrower than `line`. A closing may bridge from any wall cell except those that
-        # clearly belong to a wall running the other way, so it never joins a hallway's two
-        # walls across it but still spans a door between stubs, jambs or a corner.
-        along_row, along_col = _elongated(walls, int(0.5 / res))
-        walls |= close(walls & ~along_col, np.ones((1, n), np.uint8))
-        walls |= close(walls & ~along_row, np.ones((n, 1), np.uint8))
+        walls |= close(walls, np.ones((1, n), np.uint8))
+        walls |= close(walls, np.ones((n, 1), np.uint8))
         if diagonal:
             d = np.eye(int(min(line, 0.8) / res * 0.7), dtype=np.uint8)
             walls |= close(walls, d)
@@ -219,27 +249,7 @@ def _enclose(occ, res, line, radius, diagonal, min_area):
     walls = cv2.dilate(walls, np.ones((3, 3), np.uint8))
     flood = (1 - walls).astype(np.uint8)
     cv2.floodFill(flood, None, (0, 0), 2)
-    n, labels, stats, _ = cv2.connectedComponentsWithStats((flood == 1).astype(np.uint8), connectivity=4)
-    return labels, [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] * res * res >= min_area]
-
-
-def _elongated(mask, min_len):
-    """Cells of pieces running along the rows / along the columns: a run at least `min_len`
-    long in that direction and three times longer than it is thick."""
-    h, v = _run_lengths(mask), _run_lengths(mask.T).T
-    return (h >= min_len) & (h >= 3 * v), (v >= min_len) & (v >= 3 * h)
-
-
-def _run_lengths(mask):
-    """For every set cell, the length of the run of set cells it belongs to along its row."""
-    m = mask > 0
-    rows, cols = m.shape
-    edge = np.diff(np.pad(m, ((0, 0), (1, 1))).astype(np.int8), axis=1)
-    (r0, c0), (_, c1) = np.nonzero(edge == 1), np.nonzero(edge == -1)
-    acc = np.zeros((rows, cols + 1), np.int32)
-    np.add.at(acc, (r0, c0), c1 - c0)
-    np.add.at(acc, (r0, c1), -(c1 - c0))
-    return np.cumsum(acc, axis=1)[:, :cols] * m
+    return flood
 
 
 def _open_rect(xy, theta, pct=2):

@@ -65,7 +65,7 @@ def main(argv=None):
     p.add_argument("--count", type=int, default=6)
 
     p = sub.add_parser("synth", help="generate a synthetic capture with ground truth")
-    p.add_argument("scene", choices=["rect", "lshape", "apartment"])
+    p.add_argument("scene", choices=["rect", "lshape", "apartment", "hall"])
     p.add_argument("tier", choices=["photos", "video", "lidar", "roomplan", "stray"])
     p.add_argument("-o", "--out", type=Path, default=Path("data"))
 

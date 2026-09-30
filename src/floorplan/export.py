@@ -55,8 +55,10 @@ def to_dict(rooms: list[Room], meta: dict | None = None, tier="lidar", marker_sc
     return out
 
 
-def adjacency(rooms: list[dict], tol=0.35) -> list[dict]:
-    """Rooms are connected where doors of both line up (the two faces of one doorway)."""
+def adjacency(rooms: list[dict], tol=0.35, through=0.5) -> list[dict]:
+    """Rooms are connected where doors of both line up (the two faces of one doorway), or where a
+    door opens onto another room's outline within `through` (a wall's thickness plus a margin):
+    the other side's jambs are not always seen, a hallway's often are not."""
     doors = [(r["id"], o) for r in rooms for o in r["openings"] if o["type"] == "door"]
     links, seen = [], set()
     for i, (ra, a) in enumerate(doors):
@@ -68,7 +70,23 @@ def adjacency(rooms: list[dict], tol=0.35) -> list[dict]:
             if np.linalg.norm(ca - cb) < tol:
                 links.append({"rooms": [ra, rb], "via": [a["id"], b["id"]]})
                 seen |= {(ra, rb), (rb, ra)}
+    for ra, a in doors:
+        ca = (np.array(a["start"]) + np.array(a["end"])) / 2
+        for r in rooms:
+            rb = r["id"]
+            if rb == ra or (ra, rb) in seen:
+                continue
+            if _distance_to_outline(ca, np.array(r["vertices"])) < through:
+                links.append({"rooms": [ra, rb], "via": [a["id"]]})
+                seen |= {(ra, rb), (rb, ra)}
     return links
+
+
+def _distance_to_outline(p, poly):
+    a, b = poly, np.roll(poly, -1, axis=0)
+    d = b - a
+    t = np.clip(np.einsum("ij,ij->i", p - a, d) / np.maximum(np.einsum("ij,ij->i", d, d), 1e-12), 0, 1)
+    return float(np.min(np.linalg.norm(a + t[:, None] * d - p, axis=1)))
 
 
 def _r(p):

@@ -88,6 +88,17 @@ def test_walkcheck_on_a_synthetic_walkthrough(tmp_path):
     assert w["rooms"] == 2 and w["walk_inside_pct"] >= 95 and w["components"] == 1, w
 
 
+def test_hallway_is_a_room_and_links_the_rooms_off_it(tmp_path):
+    """Two rooms off a 1 m hallway, walked in one go. Closing doorways used to fill the hallway
+    as wall, so it was never a room, 57% of the walk fell outside every room and nothing was
+    adjacent. The walked space now becomes a room, and the doors link through it."""
+    from floorplan.evaluate import walk_check
+    from floorplan.pipeline import lidar_capture
+    sc = synth.make_scene("hall")
+    w = walk_check(lidar_capture(synth.write_stray(sc, tmp_path / "walk"), find_damage=False))
+    assert w["rooms"] == 3 and w["walk_inside_pct"] >= 95 and w["components"] == 1, w
+
+
 def test_output_matches_published_schema(tmp_path):
     import jsonschema
     from pathlib import Path

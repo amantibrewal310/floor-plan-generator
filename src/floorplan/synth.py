@@ -39,6 +39,7 @@ class Scene:
     walk: list[list[tuple[float, float]]]  # camera waypoints, one list per capture
     marker_size: float = 0.20
     height: float = HEIGHT
+    look_along: bool = False  # walkthroughs look where they walk, panning (else at the room's middle)
 
     def door_segments(self):
         """[(room, edge, p0, p1)] in world coordinates."""
@@ -120,7 +121,24 @@ def make_scene(name: str) -> Scene:
              [(5.0, 0.9), (6.6, 0.9), (6.6, 2.7), (5.0, 2.7)]],
             marker_size=0.18,
         )
-    raise ValueError(f"unknown scene {name!r}; choose rect, lshape or apartment")
+    if name == "hall":
+        # Two rooms off a 1 m hallway (the spec's "rooms plus a connector"), walked in one go:
+        # room A, through its door, along the hallway, into room B and back.
+        t = 0.12
+        a = _poly((0, 0), (3.5, 0), (3.5, 3.0), (0, 3.0))
+        b = _poly((3.5 + t, 0), (7.2, 0), (7.2, 3.0), (3.5 + t, 3.0))
+        hall = _poly((0, 3.0 + t), (7.2, 3.0 + t), (7.2, 4.12), (0, 4.12))
+        return Scene(
+            name, [a, b, hall],
+            # doorways at x 1.2-2.1 (A) and 5.0-5.9 (B); offsets run from each edge's start vertex
+            [Door(0, 2, 3.5 - 2.1, 0.9), Door(2, 0, 1.2, 0.9),
+             Door(1, 2, 7.2 - 5.9, 0.9), Door(2, 0, 5.0, 0.9)],
+            [],
+            [[(1.75, 1.2), (1.65, 2.4), (1.65, 3.62), (5.45, 3.62), (5.45, 2.4), (5.45, 1.2),
+              (5.45, 2.4), (5.45, 3.62), (1.65, 3.62), (1.65, 2.4)]],
+            look_along=True,
+        )
+    raise ValueError(f"unknown scene {name!r}; choose rect, lshape, apartment or hall")
 
 
 SCENES = ("rect", "lshape", "apartment")
@@ -289,7 +307,11 @@ def walk_path(scene: Scene, step: float):
     path, look = [], []
     for i, loop in enumerate(loops):
         path += list(loop)
-        look += [None] * len(loop)
+        if scene.look_along:  # a hallway's far walls are only seen by walking towards them
+            d = np.diff(np.vstack([loop, loop[:1]]), axis=0)
+            look += [math.atan2(y, x) for x, y in d]
+        else:
+            look += [None] * len(loop)
         if i + 1 < len(loops):
             door = next((p0 + p1) / 2 for _, _, p0, p1 in scene.door_segments())
             legs = [loop[-1], door - np.array([0.6, 0]), door + np.array([0.6, 0]), loops[i + 1][0]]
@@ -311,6 +333,8 @@ def write_video(scene: Scene, out: Path, fps=15, speed=0.35, seed=0) -> Path:
     yaw = None
     for k, (p, heading) in enumerate(zip(path, look)):
         target = heading if heading is not None else _look_yaw(p, _room_of(p, scene)) + 0.45 * math.sin(k / fps * 0.8)
+        if scene.look_along:  # pan left and right while walking, as people scan a room
+            target += 0.9 * math.sin(k / fps * 0.8)
         yaw = target if yaw is None else yaw + math.remainder(target - yaw, 2 * math.pi) * 0.08
         cam = np.array([p[0], p[1], 1.45 + 0.02 * math.sin(k / fps * 5)])
         # mostly level, with a glance down at the floor markers every few seconds
@@ -461,6 +485,8 @@ def write_stray(scene: Scene, out: Path, fps=6, speed=0.35, drift_deg_per_m=0.8,
     yaw, walked, p_drift = None, 0.0, None
     for k, (p, heading) in enumerate(zip(path, look)):
         target = heading if heading is not None else _look_yaw(p, _room_of(p, scene)) + 0.45 * math.sin(k / fps * 0.8)
+        if scene.look_along:  # pan left and right while walking, as people scan a room
+            target += 0.9 * math.sin(k / fps * 0.8)
         yaw = target if yaw is None else yaw + math.remainder(target - yaw, 2 * math.pi) * 0.25
         cam = np.array([p[0], p[1], 1.45 + 0.02 * math.sin(k / fps * 5)])
         pitch = -0.1 + 0.25 * math.sin(k / fps * 0.7)  # looks up at the ceiling and down at the floor
