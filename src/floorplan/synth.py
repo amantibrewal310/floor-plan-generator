@@ -71,6 +71,22 @@ class Scene:
         }
 
 
+def tape_truth(scene: Scene) -> dict:
+    """Ground truth in the tape-measure format of evaluate.py (what a person would write down)."""
+    rooms = []
+    for i, poly in enumerate(scene.rooms):
+        n = len(poly)
+        x, y = poly[:, 0], poly[:, 1]
+        rooms.append({
+            "name": f"Room {i + 1}",
+            "walls_m": [round(float(np.linalg.norm(poly[(k + 1) % n] - poly[k])), 4) for k in range(n)],
+            "ceiling_m": scene.height,
+            "area_m2": round(0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))), 4),
+            "openings": [{"type": "door", "width_m": d.width} for d in scene.doors if d.room == i],
+        })
+    return {"rooms": rooms}
+
+
 def _poly(*pts):
     return np.array(pts, dtype=float)
 

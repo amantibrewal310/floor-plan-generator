@@ -37,6 +37,15 @@ def main(argv=None):
             p.add_argument("--fps", type=float, default=2.0, help="keyframes per second")
             p.add_argument("--work", type=Path, help="keep extracted keyframes here")
 
+    p = sub.add_parser("score", help="score a plan.json against tape/laser ground truth")
+    p.add_argument("plan", type=Path)
+    p.add_argument("truth", type=Path)
+    p.add_argument("-o", "--out", type=Path, help="write the full scoring JSON here")
+
+    p = sub.add_parser("repeat", help="repeatability: compare two plan.json of the same room(s)")
+    p.add_argument("a", type=Path)
+    p.add_argument("b", type=Path)
+
     p = sub.add_parser("markers", help="write printable ArUco markers (A4, 300 dpi)")
     p.add_argument("-o", "--out", type=Path, default=Path("markers"))
     p.add_argument("--size-mm", type=int, default=180)
@@ -75,6 +84,19 @@ def main(argv=None):
             return 1
         _summary(result)
         print(f"\nwrote {a.out / 'plan.svg'} and {a.out / 'plan.json'}")
+    elif a.cmd == "score":
+        from .evaluate import load, score
+        res = score(load(a.plan), load(a.truth))
+        if a.out:
+            a.out.write_text(json.dumps(res, indent=2))
+        print(json.dumps(res["summary"], indent=2))
+    elif a.cmd == "repeat":
+        from .evaluate import load, repeatability
+        res = repeatability(load(a.a), load(a.b))
+        for r in res["rows"]:
+            print(f"{r['room']:>12} {r['wall']:>8}: {r['a'] * 100:7.1f} vs {r['b'] * 100:7.1f} cm  "
+                  f"diff {r['diff_cm']:.2f} cm  {'pass' if r['pass'] else 'FAIL'}")
+        print("repeatability gate:", "PASS" if res["pass"] else "FAIL")
     elif a.cmd == "markers":
         from .media import write_marker_sheet
         write_marker_sheet(a.out, range(a.count), a.size_mm)
@@ -95,7 +117,7 @@ def main(argv=None):
             paths = [synth.write_stray(sc, d / "stray")]
         else:
             paths = [synth.write_roomplan_json(sc, d / "room.json")]
-        (d / "ground_truth.json").write_text(json.dumps(sc.ground_truth(), indent=2))
+        (d / "ground_truth.json").write_text(json.dumps(synth.tape_truth(sc), indent=2))
         print("\n".join(str(p) for p in paths))
         if a.tier in ("photos", "video"):
             print(f"marker size: {sc.marker_size} m")

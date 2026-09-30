@@ -112,3 +112,15 @@ def test_damage_lands_on_surface_with_metric_extent_and_rules():
     assert [f["rule"] for f in data["concealed_flags"]] == ["R2 damp at wall base"]
     items = {s["item"] for s in data["scope"]}
     assert "Repaint whole surface" in items and any(i.startswith("Investigate") for i in items)
+
+
+def test_score_against_tape_truth_and_repeatability(tmp_path):
+    from floorplan.evaluate import repeatability, score
+    sc = synth.make_scene("lshape")
+    a = run("lidar", [synth.write_lidar_ply(sc, tmp_path / "a.ply", seed=1)], tmp_path / "a")
+    b = run("lidar", [synth.write_lidar_ply(sc, tmp_path / "b.ply", seed=2)], tmp_path / "b")
+    s = score(a, synth.tape_truth(sc))["summary"]
+    assert s["rooms_found"] == "1/1" and s["walls_pass"] == "6/6", s
+    assert s["ceiling_gate"] and s["openings_pass_pct"] == 100.0, s
+    assert s["interval_coverage_pct"] >= 80, s
+    assert repeatability(a, b)["pass"]
