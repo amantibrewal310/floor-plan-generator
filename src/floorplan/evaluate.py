@@ -11,6 +11,7 @@ benchmark/README.md):
                              {"type": "window", "width_m": 1.21}]}],
      "footprint_m2": 42.0}                                   # optional
 
+`walls_m`, `ceiling_m` and `openings` are each optional: whatever is left out is not scored.
 Rooms are matched by name (a photo folder is named after its room), else by area.
 Walls are matched by the cyclic order and direction that fits best. Openings are matched by
 type and width; a missed or a phantom opening counts as a failure, as the gates require.
@@ -114,8 +115,9 @@ def score(plan: dict, gt: dict) -> dict:
             m = r["floor_area_m2"]
             areas.append({"room": g["name"], "truth": ga, "pred": m["value"], "err_pct": 100 * (m["value"] - ga) / ga})
             cover.append(_inside(m, ga))
-        # openings: greedy by width within each type; leftovers on either side are misses
-        for kind in ("door", "window"):
+        # openings: greedy by width within each type; leftovers on either side are misses.
+        # No "openings" key means they were not measured (e.g. sizes read off a floor plan), so none are scored.
+        for kind in ("door", "window") if "openings" in g else ():
             gws = sorted(o["width_m"] for o in g.get("openings", []) if o["type"] == kind)
             pws = [o for o in r["openings"] if o["type"] == kind]
             for t in gws:

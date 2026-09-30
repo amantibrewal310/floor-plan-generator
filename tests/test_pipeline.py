@@ -125,6 +125,11 @@ def test_score_against_tape_truth_and_repeatability(tmp_path):
     assert s["ceiling_gate"] and s["openings_pass_pct"] == 100.0, s
     assert s["interval_coverage_pct"] >= 80, s
     assert repeatability(a, b)["pass"]
+    # truth without openings: they were not measured, so none are scored
+    unmeasured = synth.tape_truth(sc)
+    for r in unmeasured["rooms"]:
+        del r["openings"]
+    assert score(a, unmeasured)["summary"]["openings_pass_pct"] is None
 
 
 def test_bench_manifest_end_to_end(tmp_path):
@@ -135,6 +140,8 @@ def test_bench_manifest_end_to_end(tmp_path):
         synth.write_lidar_ply(sc, tmp_path / "raw" / f"scan{i}.ply", seed=i)
     truth = synth.tape_truth(sc)
     (tmp_path / "truth.json").write_text(json.dumps(truth))
+    import trimesh
+    trimesh.PointCloud(np.random.default_rng(0).random((200, 3))).export(tmp_path / "raw" / "empty.ply")
     theirs = json.loads(json.dumps(truth))
     for r in theirs["rooms"]:
         r["walls_m"] = [w + 0.03 for w in r["walls_m"]]  # an app that is 3 cm long everywhere
@@ -144,13 +151,26 @@ def test_bench_manifest_end_to_end(tmp_path):
         {"id": "scan0", "tier": "lidar", "inputs": ["raw/scan0.ply"], "truth": "truth.json",
          "competitor": {"app": "SomeApp 1.0", "measured": "app.json"}},
         {"id": "scan1", "tier": "lidar", "inputs": ["raw/scan1.ply"], "truth": "truth.json", "repeat_of": "scan0"},
+        {"id": "empty", "tier": "lidar", "inputs": ["raw/empty.ply"], "truth": "truth.json"},
     ]}))
     res = run_bench(tmp_path / "manifest.json", damage=False)
     report = (tmp_path / "out" / "report.md").read_text()
-    for section in ("Gates per capture", "Repeatability", "Drift ablation", "Head-to-head"):
+    for section in ("Overall per tier", "Gates per capture", "Failed captures", "Repeatability",
+                    "Drift ablation", "Head-to-head"):
         assert section in report
+    assert "too few wall points" in res["empty"]["error"]  # a failed capture is reported, not fatal
     assert res["scan0"]["competitor"]["beat_or_tie_pct"] >= 70
     assert res["scan1"]["repeat"]["pass"]
+
+
+def test_webp_photos_reach_the_model(tmp_path):
+    """Photos saved from the web are often .webp, which MapAnything's loader skips without a word."""
+    from PIL import Image
+    from floorplan import recon
+    Image.new("RGB", (64, 48), (200, 10, 10)).save(tmp_path / "a.webp")
+    (p,) = recon.list_images(tmp_path)
+    png = recon._readable(p, tmp_path / "a.png")
+    assert png.endswith(".png") and Image.open(png).size == (64, 48)
 
 
 def test_damage_seen_once_needs_a_confident_detector():

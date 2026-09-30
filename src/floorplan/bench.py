@@ -24,6 +24,8 @@ import json
 import time
 from pathlib import Path
 
+import numpy as np
+
 from .evaluate import load, repeatability, score, to_json
 from .pipeline import run
 
@@ -37,7 +39,13 @@ def run_bench(manifest: Path, out: Path | None = None, damage=True) -> dict:
     for c in spec["captures"]:
         d = out / c["id"]
         t = time.time()
-        plan = run(c["tier"], [root / p for p in c["inputs"]], d, find_damage=damage)
+        try:
+            plan = run(c["tier"], [root / p for p in c["inputs"]], d, find_damage=damage)
+        except ValueError as e:  # e.g. no enclosed room: a result, not a reason to stop the run
+            results[c["id"]] = {"id": c["id"], "tier": c["tier"], "seconds": round(time.time() - t, 1),
+                                "error": str(e)}
+            print(f"[{c['id']}] failed: {e}", flush=True)
+            continue
         r = {"id": c["id"], "tier": c["tier"], "seconds": round(time.time() - t, 1), "plan": plan}
         if c.get("truth"):
             r["score"] = score(plan, load(root / c["truth"]))
@@ -52,7 +60,7 @@ def run_bench(manifest: Path, out: Path | None = None, damage=True) -> dict:
         results[c["id"]] = r
         print(f"[{c['id']}] {r['seconds']} s", flush=True)
     for c in spec["captures"]:
-        if c.get("repeat_of") and c["repeat_of"] in results:
+        if c.get("repeat_of") and "plan" in results.get(c["repeat_of"], {}) and "plan" in results[c["id"]]:
             results[c["id"]]["repeat"] = repeatability(results[c["repeat_of"]]["plan"], results[c["id"]]["plan"])
     (out / "results.json").write_text(to_json(results))
     report = _report(results)
@@ -99,6 +107,7 @@ def _report(results) -> str:
          "| capture | tier | rooms | walls pass | wall MAE | wall max | openings ≤2 cm | ceiling MAE | "
          "ceiling bias | footprint err % | interval coverage % | time s |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    L[4:4] = _overall(results)
     for r in results.values():
         s = r.get("score", {}).get("summary")
         if not s:
@@ -107,6 +116,10 @@ def _report(results) -> str:
         L.append(f"| {r['id']} | {r['tier']} | {s['rooms_found']} | {s['walls_pass']} | {s['wall_mae_cm']} | "
                  f"{s['wall_max_cm']} | {s['openings_pass_pct']} | {s['ceiling_mae_cm']} | {s['ceiling_bias_cm']} | "
                  f"{'-' if fp is None else round(fp, 2)} | {s['interval_coverage_pct']} | {r['seconds']} |")
+    failed = [r for r in results.values() if "error" in r]
+    if failed:
+        L += ["", "## Failed captures", "", "| capture | tier | error |", "|---|---|---|"]
+        L += [f"| {r['id']} | {r['tier']} | {r['error']} |" for r in failed]
     rep = [r for r in results.values() if "repeat" in r]
     if rep:
         L += ["", "## Repeatability (same room, same tier)", "", "| capture | room | surface | a cm | b cm | diff cm | pass |",
@@ -137,3 +150,26 @@ def _report(results) -> str:
                 L.append(f"| {row['dimension']} | {row['truth'] * 100:.1f} | {row['ours_err_cm']} | "
                          f"{row['theirs_err_cm']} | {'yes' if row['beat_or_tie'] else 'no'} |")
     return "\n".join(L) + "\n"
+
+
+def _overall(results) -> list[str]:
+    """One row per tier, pooling every wall and room across captures (a failed capture counts
+    its rooms as not found)."""
+    L = ["## Overall per tier", "",
+         "| tier | captures | failed | walls pass | wall MAE cm | wall median rel err % | "
+         "area median abs err % | area bias % | interval coverage % |",
+         "|---|---|---|---|---|---|---|---|---|"]
+    for tier in sorted({r["tier"] for r in results.values()}):
+        rs = [r for r in results.values() if r["tier"] == tier]
+        sc = [r["score"] for r in rs if "score" in r]
+        walls = [w for s in sc for w in s["walls"] if w.get("truth") is not None]
+        errs = [w for w in walls if w.get("err") is not None]
+        areas = [a["err_pct"] for s in sc for a in s["areas"]]
+        cov = [s["summary"]["interval_coverage_pct"] for s in sc if s["summary"]["interval_coverage_pct"] is not None]
+        med = lambda v: round(float(np.median(v)), 1) if v else None
+        L.append(f"| {tier} | {len(rs)} | {sum('error' in r for r in rs)} | "
+                 f"{sum(w['pass'] for w in walls)}/{len(walls)} | "
+                 f"{round(100 * float(np.mean([abs(w['err']) for w in errs])), 1) if errs else None} | "
+                 f"{med([100 * abs(w['err']) / w['truth'] for w in errs])} | {med([abs(a) for a in areas])} | "
+                 f"{med(areas)} | {round(float(np.mean(cov)), 1) if cov else None} |")
+    return L + [""]

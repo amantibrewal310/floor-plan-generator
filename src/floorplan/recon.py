@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,7 +23,9 @@ import cv2
 import numpy as np
 
 MODEL_ID = "facebook/map-anything-apache"
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"}
+# what MapAnything's loader opens; it silently skips anything else
+MODEL_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
 CACHE_DIR = Path(os.environ.get("FLOORPLAN_CACHE", Path.home() / ".cache" / "floorplan"))
 
 
@@ -92,7 +95,8 @@ def _infer(images: list[Path]) -> Prediction:
     from mapanything.utils.image import load_images
 
     model, dev = load_model()
-    views = load_images([str(p) for p in images])
+    with tempfile.TemporaryDirectory() as tmp:
+        views = load_images([_readable(p, Path(tmp) / f"{i}.png") for i, p in enumerate(images)])
     out = model.infer(views, memory_efficient_inference=True, use_amp=dev != "cpu",
                        amp_dtype="bf16" if dev == "cuda" else "fp16", apply_mask=True, mask_edges=True)
 
@@ -102,6 +106,17 @@ def _infer(images: list[Path]) -> Prediction:
     img = np.clip(stack("img_no_norm") * 255, 0, 255).astype(np.uint8)
     return Prediction(stack("pts3d"), stack("mask")[..., 0] > 0.5, stack("conf"), stack("camera_poses"),
                       stack("intrinsics"), img, [Path(p).name for p in images])
+
+
+def _readable(path: Path, png: Path) -> str:
+    """A path MapAnything will load: other formats (.webp) re-encoded losslessly."""
+    if Path(path).suffix.lower() in MODEL_EXTS:
+        return str(path)
+    from PIL import Image
+
+    with Image.open(path) as im:
+        im.convert("RGB").save(png)
+    return str(png)
 
 
 # ---------------------------------------------------------------- metric, gravity-aligned cloud
