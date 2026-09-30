@@ -125,9 +125,12 @@ often not seen.
 
 Diff: `git diff c2528cd..595d4da -- src/`
 
-Both runs regenerate with:
+Both runs regenerate with the commands below, from the repository root, with the three walks in
+`benchmark/raw/samples/` (see benchmark/README.md). `benchmark/raw/` is ignored by git, so the
+data stays in place across the checkouts. Checked on a second machine (Apple M5): both commits
+reproduce every number in the tables above, about 30 s per run.
 
 ```
-git checkout c2528cd && uv run floorplan walkcheck ~/Downloads/c00a170fe1 ~/Downloads/1a8384c3f6 ~/Downloads/c7d28f72c6
-git checkout 595d4da && uv run floorplan walkcheck ~/Downloads/c00a170fe1 ~/Downloads/1a8384c3f6 ~/Downloads/c7d28f72c6
+git checkout c2528cd && uv run floorplan walkcheck benchmark/raw/samples/c00a170fe1 benchmark/raw/samples/1a8384c3f6 benchmark/raw/samples/c7d28f72c6
+git checkout 595d4da && uv run floorplan walkcheck benchmark/raw/samples/c00a170fe1 benchmark/raw/samples/1a8384c3f6 benchmark/raw/samples/c7d28f72c6
 ```

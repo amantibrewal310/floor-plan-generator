@@ -37,12 +37,31 @@ wall, reveal to reveal.
 For the head-to-head, write the app's numbers from its export in the same format, as
 `<app>.json`, and keep the export file itself next to it.
 
+## Sample walkthroughs
+
+Three LiDAR walkthroughs recorded with Stray Scanner, with no tape measurements:
+
+| folder | frames | size | walk |
+|---|---|---|---|
+| `c00a170fe1` | 1715 | 93 MB | 14 m, 2 to 3 rooms |
+| `1a8384c3f6` | 5251 | 290 MB | 53 m |
+| `c7d28f72c6` | 9745 | 490 MB | 98 m |
+
+They live in `raw/samples/`. Without ground truth they can't score wall lengths, but
+`floorplan walkcheck` scores them on what needs no tape: how much of the walk falls inside a room,
+and whether the rooms link into one plan. The fix loop (`FIX_LOOP.md`) runs on them.
+
+```
+uv run floorplan walkcheck benchmark/raw/samples/c00a170fe1 benchmark/raw/samples/1a8384c3f6 benchmark/raw/samples/c7d28f72c6
+```
+
 ## Layout
 
 ```
 benchmark/
   manifest.json          # the list of captures (committed)
   raw/                   # captures, truth.json and app exports (downloaded, not in git)
+    samples/c00a170fe1/   # the three sample walkthroughs
     flat/truth.json
     flat/photos/kitchen/IMG_0001.HEIC ...
     flat/video/IMG_1234.MOV
