@@ -73,7 +73,7 @@ is one that needs none.
 
 Two attempts, both in the history.
 
-**Attempt 1, the declared change** (commit `8b84ebc`): door-closing kernels skip cells of walls
+**Attempt 1, the declared change** (commit `6c8f79a`): door-closing kernels skip cells of walls
 running the other way.
 
 | capture | inside % (before → after) | adjacent pairs | components |
@@ -89,7 +89,7 @@ full of 0.5 to 1 m blobs (clutter, noisy depth near walls). They are not clean e
 so the rule let them bridge across the hallway anyway. Without closing, the hallway is open, but
 it leaks outside through the doorways it connects.
 
-**Attempt 2, what shipped** (commit `366fa60`). The door-closing is left exactly as before.
+**Attempt 2, what shipped** (commit `595d4da`). The door-closing is left exactly as before.
 Instead, for a walkthrough, the space that is free in the scan itself, inside the home, not
 already a room and walked by the phone becomes a room of its own. A door also links its room to
 the room whose outline lies within 0.5 m on the other side, since a hallway's door jambs are
@@ -123,11 +123,11 @@ often not seen.
     this in as a test. Before the fix it gives 2 rooms, 42.9% of the walk inside a room and no
     adjacency; after, 3 rooms, 99.0% and one connected plan.
 
-Diff: `git diff 72ab94c..366fa60 -- src/`
+Diff: `git diff c2528cd..595d4da -- src/`
 
 Both runs regenerate with:
 
 ```
-git checkout 72ab94c && uv run floorplan walkcheck ~/Downloads/c00a170fe1 ~/Downloads/1a8384c3f6 ~/Downloads/c7d28f72c6
-git checkout 366fa60 && uv run floorplan walkcheck ~/Downloads/c00a170fe1 ~/Downloads/1a8384c3f6 ~/Downloads/c7d28f72c6
+git checkout c2528cd && uv run floorplan walkcheck ~/Downloads/c00a170fe1 ~/Downloads/1a8384c3f6 ~/Downloads/c7d28f72c6
+git checkout 595d4da && uv run floorplan walkcheck ~/Downloads/c00a170fe1 ~/Downloads/1a8384c3f6 ~/Downloads/c7d28f72c6
 ```
