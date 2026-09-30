@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/amantibrewal310/floor-plan-generator/schema/plan.schema.json",
+  "title": "Floor plan",
+  "description": "Output of `floorplan <tier> ...`. Units are metres; every measurement is a 90% interval.",
+  "type": "object",
+  "required": ["schema_version", "units", "tier", "interval", "rooms", "adjacency", "footprint_m2",
+               "damage", "concealed_flags", "scope", "stitching", "captures"],
+  "$defs": {
+    "measure": {
+      "type": "object",
+      "required": ["value", "lo", "hi"],
+      "properties": {"value": {"type": "number"}, "lo": {"type": "number"}, "hi": {"type": "number"}}
+    },
+    "xy": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+    "surface": {
+      "type": "string",
+      "description": "R<n>.W<k> (wall k of room n), R<n>.floor or R<n>.ceiling",
+      "pattern": "^R[0-9]+\\.(W[0-9]+|floor|ceiling)$"
+    }
+  },
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "units": {"const": "metres"},
+    "tier": {"enum": ["photos", "video", "lidar"]},
+    "interval": {"const": "90%"},
+    "rooms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "floor_area_m2", "perimeter_m", "ceiling_height_m", "vertices", "walls", "openings"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^R[0-9]+$"},
+          "name": {"type": "string"},
+          "floor_area_m2": {"$ref": "#/$defs/measure"},
+          "perimeter_m": {"$ref": "#/$defs/measure"},
+          "ceiling_height_m": {"oneOf": [{"$ref": "#/$defs/measure"}, {"type": "null"}],
+                               "description": "null when the capture never saw the ceiling"},
+          "vertices": {"type": "array", "items": {"$ref": "#/$defs/xy"}, "minItems": 3},
+          "walls": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "start", "end", "length_m", "coverage"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^R[0-9]+\\.W[0-9]+$"},
+                "start": {"$ref": "#/$defs/xy"}, "end": {"$ref": "#/$defs/xy"},
+                "length_m": {"$ref": "#/$defs/measure"},
+                "coverage": {"type": "number", "minimum": 0, "maximum": 1,
+                             "description": "fraction of the wall actually observed (openings count as observed)"}
+              }
+            }
+          },
+          "openings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "type", "wall", "start", "end", "width_m"],
+              "properties": {
+                "id": {"type": "string"},
+                "type": {"enum": ["door", "window"]},
+                "wall": {"type": "string", "pattern": "^R[0-9]+\\.W[0-9]+$"},
+                "start": {"$ref": "#/$defs/xy"}, "end": {"$ref": "#/$defs/xy"},
+                "width_m": {"$ref": "#/$defs/measure"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "adjacency": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["rooms", "via"],
+        "properties": {"rooms": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2},
+                       "via": {"type": "array", "items": {"type": "string"}}}
+      }
+    },
+    "footprint_m2": {"$ref": "#/$defs/measure"},
+    "damage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "surface", "class", "score", "width_m", "height_m", "area_m2", "center"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^D[0-9]+$"},
+          "surface": {"$ref": "#/$defs/surface"},
+          "class": {"enum": ["water_stain", "mold", "crack", "peeling_paint", "hole"]},
+          "score": {"type": "number", "minimum": 0, "maximum": 1},
+          "width_m": {"$ref": "#/$defs/measure"},
+          "height_m": {"$ref": "#/$defs/measure"},
+          "area_m2": {"$ref": "#/$defs/measure"},
+          "center": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                     "description": "x, y in plan coordinates, z above the floor"},
+          "views": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "concealed_flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "surface", "rule", "reason", "evidence"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^C[0-9]+$"},
+          "surface": {"$ref": "#/$defs/surface"},
+          "rule": {"type": "string"},
+          "reason": {"type": "string"},
+          "evidence": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "scope": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "surface", "item", "quantity", "unit", "from"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^S[0-9]+$"},
+          "surface": {"$ref": "#/$defs/surface"},
+          "item": {"type": "string"},
+          "quantity": {"$ref": "#/$defs/measure"},
+          "unit": {"enum": ["m2", "m", "each"]},
+          "from": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "stitching": {"type": "array", "items": {"type": "string"}},
+    "captures": {"type": "array", "items": {"type": "object"}}
+  }
+}

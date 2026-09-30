@@ -103,12 +103,17 @@ def main(argv=None):
 
 
 def _summary(result):
+    def iv(m, unit="m", k=100):
+        return f"{m['value'] * k:.1f} [{m['lo'] * k:.1f}, {m['hi'] * k:.1f}]"
     for r in result["rooms"]:
-        h = f", height {r['height_m']:.2f} m" if r["height_m"] else ""
-        print(f"{r['name']}: {r['area_m2']:.2f} m²{h}")
-        print("  walls (cm): " + ", ".join(f"{w['length_m'] * 100:.1f}" for w in r["walls"]))
-        for d in r["doors"]:
-            print(f"  door on wall {d['wall']}: {d['width_m'] * 100:.1f} cm")
+        h = r["ceiling_height_m"]
+        print(f"{r['id']} {r['name']}: {r['floor_area_m2']['value']:.2f} m², "
+              f"ceiling {'-' if h is None else iv(h) + ' cm'}")
+        print("  walls (cm, 90% interval): " + ", ".join(iv(w["length_m"]) for w in r["walls"]))
+        for o in r["openings"]:
+            print(f"  {o['type']} on {o['wall']}: {iv(o['width_m'])} cm")
+    for a in result["adjacency"]:
+        print(f"adjacent: {' <-> '.join(a['rooms'])}")
     for line in result["stitching"]:
         print("stitch:", line)
     for c in result["captures"]:

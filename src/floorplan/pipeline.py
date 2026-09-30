@@ -96,6 +96,8 @@ def run(tier: str, inputs: list[Path], out: Path, marker_size=None, wall_thickne
         r.name = f"Room {k + 1}"
     meta = {"tier": tier, "inputs": [str(p) for p in inputs], "stitching": log,
             "captures": [getattr(c, "stats", {"source": c.source}) for c in captures]}
-    export.write_json(rooms, out / "plan.json", meta)
-    export.write_svg(rooms, out / "plan.svg", title=f"Floor plan ({tier})")
-    return export.to_dict(rooms, meta)
+    marker = any("ArUco" in str(c.get("scale_from", "")) for c in meta["captures"])
+    data = export.to_dict(rooms, meta, tier=tier, marker_scale=marker)
+    export.write_json(data, out / "plan.json")
+    export.write_svg(rooms, out / "plan.svg", title=f"Floor plan ({tier})", data=data)
+    return data

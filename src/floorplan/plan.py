@@ -27,6 +27,10 @@ class Room:
     doors: list[tuple[int, float, float]] = field(default_factory=list)  # (edge, start, end) along edge
     height: float | None = None
     name: str = ""
+    windows: list[tuple[int, float, float]] = field(default_factory=list)  # same layout as doors
+    # per edge: fraction of its length backed by wall points, and the spread of those points (m)
+    wall_support: list[tuple[float, float]] = field(default_factory=list)
+    extra: dict = field(default_factory=dict)  # damage regions etc., attached later
 
     @property
     def area(self) -> float:
@@ -37,16 +41,17 @@ class Room:
         n = len(self.polygon)
         return [(self.polygon[i], self.polygon[(i + 1) % n]) for i in range(n)]
 
-    def door_segments(self):
+    def door_segments(self, which="doors"):
         out = []
-        for e, s0, s1 in self.doors:
+        for e, s0, s1 in getattr(self, which):
             a, b = self.edges()[e]
             u = (b - a) / np.linalg.norm(b - a)
             out.append((e, a + u * s0, a + u * s1))
         return out
 
     def transformed(self, R: np.ndarray, t: np.ndarray) -> "Room":
-        return Room(self.polygon @ R.T + t, list(self.doors), self.height, self.name)
+        return Room(self.polygon @ R.T + t, list(self.doors), self.height, self.name, list(self.windows),
+                    list(self.wall_support), self.extra)
 
 
 def estimate_floor_ceiling(z: np.ndarray, bin_size=0.01) -> tuple[float, float | None]:
@@ -55,7 +60,7 @@ def estimate_floor_ceiling(z: np.ndarray, bin_size=0.01) -> tuple[float, float |
     bins = np.arange(lo - 0.05, hi + 0.05, bin_size)
     hist, edges = np.histogram(z, bins)
     hist = np.convolve(hist, [1, 2, 1], "same")
-    thresh = max(4 * np.median(hist[hist > 0]), 0.2 * hist.max())
+    thresh = min(max(4 * np.median(hist[hist > 0]), 0.2 * hist.max()), hist.max())
     dense = np.flatnonzero(hist >= thresh)
 
     def refine(i):
@@ -164,8 +169,9 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
         poly = _refine_polygon(poly, upper[:, :2], theta)
         if poly is None or len(poly) < 3:
             continue
-        room = Room(poly, height=height)
-        room.doors = _find_doors(room, wall_pts)
+        room = Room(poly, height=_room_height(poly, P, height))
+        room.doors, room.windows = _find_openings(room, wall_pts)
+        room.wall_support = [_support(a, b, upper[:, :2]) for a, b in room.edges()]
         rooms.append(room)
     rooms.sort(key=lambda r: -r.area)
     for k, r in enumerate(rooms):
@@ -357,13 +363,14 @@ def _intersect(merged):
     return np.array(verts)
 
 
-def _find_doors(room: Room, pts: np.ndarray, min_w=0.6, max_w=2.0) -> list[tuple[int, float, float]]:
-    """Doors: stretches of wall with no points between 1.0 m and 1.9 m (above furniture, below
-    the door head) that are also empty lower down (otherwise it is a window or a gap in the data)."""
-    doors = []
+def _find_openings(room: Room, pts: np.ndarray, min_w=0.6, max_w=2.0, min_win=0.35, max_win=3.0):
+    """Openings are stretches of wall with no points between 1.0 m and 1.9 m (above furniture,
+    below the head). Empty lower down too -> door. Wall below (a sill) and above (a head) ->
+    window: glass returns no LiDAR and no learned depth on the wall plane. Returns (doors, windows)."""
+    doors, windows = [], []
     for e, (a, b) in enumerate(room.edges()):
         L = np.linalg.norm(b - a)
-        if L < min_w + 0.1:
+        if L < min_win + 0.1:
             continue
         u = (b - a) / L
         nrm = np.array([u[1], -u[0]])
@@ -373,21 +380,57 @@ def _find_doors(room: Room, pts: np.ndarray, min_w=0.6, max_w=2.0) -> list[tuple
         mid = np.sort(along[on & (pts[:, 2] > 1.0) & (pts[:, 2] < 1.9)])
         low = along[on & (pts[:, 2] > 0.2) & (pts[:, 2] < 0.9)]
         rho = len(mid) / L  # points per metre of wall in the band
-        if len(mid) < 20 or rho < 20:  # too sparse to tell a door from missing data
+        if len(mid) < 20 or rho < 20:  # too sparse to tell an opening from missing data
             continue
         jamb = np.sort(along[on & (pts[:, 2] > 0.2) & (pts[:, 2] < 1.95)])
         sigma = 1.4826 * np.median(np.abs(perp[on] - np.median(perp[on])))  # sensor noise
         win = float(np.clip(3.5 * sigma, 0.02, 0.15))
         s = np.concatenate([[0.0], mid, [L]])
-        for k in np.flatnonzero((np.diff(s) >= min_w - 0.05) & (np.diff(s) <= max_w)):
+        for k in np.flatnonzero((np.diff(s) >= min_win - 0.05) & (np.diff(s) <= max_win)):
             s0, s1 = _edge_pos(jamb, s[k], -1, L, win), _edge_pos(jamb, s[k + 1], +1, L, win)
             w = s1 - s0
-            if not (min_w <= w <= max_w):
-                continue
             low_rho = np.sum((low > s0 + 0.05) & (low < s1 - 0.05)) / max(w - 0.1, 1e-3)
             if low_rho < 0.3 * rho * 0.7 / 0.9:  # lower band empty too -> door
-                doors.append((e, s0, s1))
-    return doors
+                if min_w <= w <= max_w:
+                    doors.append((e, s0, s1))
+            elif min_win <= w <= max_win and s0 > 0.05 and s1 < L - 0.05:
+                # a window needs wall on both sides; a gap running into a corner is missing data
+                s0w, s1w = _edge_pos(mid, s[k], -1, L, win), _edge_pos(mid, s[k + 1], +1, L, win)
+                windows.append((e, s0w, s1w))
+    return doors, windows
+
+
+def _room_height(poly, P, fallback):
+    """Ceiling height from the points above this room only (rooms can differ)."""
+    import cv2 as _cv2
+    lo = poly.min(0)
+    res = 0.05
+    shape = tuple((np.ceil((poly.max(0) - lo) / res) + 2).astype(int)[::-1])
+    m = np.zeros(shape, np.uint8)
+    _cv2.fillPoly(m, [np.round((poly - lo) / res).astype(np.int32)], 1)
+    m = _cv2.erode(m, np.ones((5, 5), np.uint8))  # stay 10 cm clear of the walls
+    ij = np.floor((P[:, :2] - lo) / res).astype(int)
+    ok = (ij >= 0).all(1) & (ij[:, 0] < shape[1]) & (ij[:, 1] < shape[0])
+    ok[ok] = m[ij[ok, 1], ij[ok, 0]] > 0
+    z = P[ok, 2]
+    if len(z) < 200:
+        return fallback
+    f, c = estimate_floor_ceiling(z)
+    return (c - f) if c is not None else None
+
+
+def _support(a, b, pts2d, bin_m=0.05):
+    """(fraction of the wall's length with wall points on it, robust spread of those points)."""
+    L = float(np.linalg.norm(b - a))
+    u = (b - a) / L
+    rel = pts2d - a
+    along, perp = rel @ u, rel @ np.array([u[1], -u[0]])
+    on = (np.abs(perp) < 0.05) & (along >= 0) & (along <= L)
+    if on.sum() < 5:
+        return 0.0, 0.05
+    cov = len(np.unique((along[on] / bin_m).astype(int))) / max(1, int(np.ceil(L / bin_m)))
+    spread = 1.4826 * float(np.median(np.abs(perp[on] - np.median(perp[on]))))
+    return round(min(1.0, cov), 3), round(spread, 4)
 
 
 def _edge_pos(s, x, side, L, win):

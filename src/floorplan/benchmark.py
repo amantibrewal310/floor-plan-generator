@@ -64,9 +64,11 @@ def evaluate(result: dict, gt: dict) -> dict:
         doors = []  # predicted door centres in the aligned frame
         for r, p in zip(result["rooms"], P):
             Rr, tr = _rigid(np.array(r["vertices"]), p)
-            for dd in r["doors"]:
+            for dd in r["openings"]:
+                if dd["type"] != "door":
+                    continue
                 c = (np.array(dd["start"]) + np.array(dd["end"])) / 2
-                doors.append((Rr @ c + tr, dd["width_m"]))
+                doors.append((Rr @ c + tr, dd["width_m"]["value"]))
         # symmetric rooms fit equally well in several orientations: let the doors decide
         miss = np.mean([min([np.linalg.norm(c - g) for c, _ in doors] + [1.0]) for g in gt_doors]) if gt_doors else 0
         score = np.median(err) + miss

@@ -1,3 +1,4 @@
+import json
 import math
 
 import numpy as np
@@ -74,3 +75,17 @@ def test_stray_lidar_drift_correction(tmp_path):
     assert on["captures"][0]["drift"]["final_yaw_correction_deg"] < -10  # it undid real drift
     m = _check(on, sc, wall_cm=3.0, corner_cm=3.0)
     assert off["corner_rmse_cm"] > 2 * m["corner_rmse_cm"], (off, m)
+
+
+def test_output_matches_published_schema(tmp_path):
+    import jsonschema
+    from pathlib import Path
+    sc = synth.make_scene("apartment")
+    scans = [synth.write_lidar_ply(sc, tmp_path / f"s{i}.ply", rooms=[i], seed=10 + i) for i in (0, 1)]
+    result = run("lidar", scans, tmp_path / "out")
+    schema = json.loads((Path(__file__).parents[1] / "schema" / "plan.schema.json").read_text())
+    jsonschema.validate(json.loads((tmp_path / "out" / "plan.json").read_text()), schema)
+    assert result["adjacency"] == [{"rooms": ["R1", "R2"], "via": result["adjacency"][0]["via"]}]
+    for r in result["rooms"]:
+        for w in r["walls"]:
+            assert w["length_m"]["lo"] < w["length_m"]["value"] < w["length_m"]["hi"]
