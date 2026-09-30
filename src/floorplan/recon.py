@@ -44,12 +44,16 @@ def list_images(folder: Path) -> list[Path]:
     return files
 
 
-def load_rgb(path: Path) -> np.ndarray:
-    from PIL import Image, ImageOps
+def is_portrait(path: Path) -> bool:
+    from PIL import Image
     from pillow_heif import register_heif_opener
 
     register_heif_opener()
-    return np.array(ImageOps.exif_transpose(Image.open(path)).convert("RGB"))
+    with Image.open(path) as im:
+        w, h = im.size
+        if im.getexif().get(0x0112, 1) in (5, 6, 7, 8):  # EXIF orientation: rotated 90 degrees
+            w, h = h, w
+    return h > w
 
 
 def predict(images: list[Path], cache_dir: Path = CACHE_DIR) -> Prediction:

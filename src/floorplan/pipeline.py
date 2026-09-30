@@ -74,9 +74,13 @@ def image_capture(name: str, images: list[Path], marker_size: float | None, one_
         frames.append((X * scale, pred.poses[v, :3, 3] @ R.T * scale, uv))
     # a photo folder is a handful of unordered stills: there is no trajectory to correct
     cap = _frames_capture(name, frames, drift_correction and not one_room, one_room=one_room,
-                          images=(lambda: [recon.load_rgb(p) for p in images]) if find_damage else None,
+                          # the model's own (cropped, resized) images: their pixels are the points' uv
+                          images=(lambda: list(pred.img)) if find_damage else None,
                           image_views=range(len(images)), view_names=[Path(p).name for p in images])
     cap.stats.update({"images": len(images), "scale_from": how, "scale": round(scale, 4)})
+    if len({recon.is_portrait(p) for p in images}) > 1:
+        cap.stats["warning"] = (f"{name}: portrait and landscape photos mixed; the model crops every image "
+                                "to one shape, so shoot a room all in landscape")
     return cap
 
 
