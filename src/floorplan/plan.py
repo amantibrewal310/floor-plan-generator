@@ -185,17 +185,23 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
 
 def _enclose(occ, res, line, radius, diagonal, min_area):
     """Close gaps in the wall mask, flood-fill from outside: (labels, enclosed component ids)."""
+    def close(img, kernel):
+        # Beyond the grid is empty. OpenCV's default erosion border counts it as wall, which
+        # turns the corner seed pixel of the flood fill into wall under a kernel that reaches
+        # only outside the image there (the anti-diagonal one).
+        return cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+
     k = 2 * int(radius / res) + 1
-    walls = cv2.morphologyEx(occ, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    walls = close(occ, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
     if line:  # thicken first: the two sides of a doorway may sit a cell or two apart
         n = int(line / res)
         walls = cv2.dilate(walls, np.ones((5, 5), np.uint8))
-        walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, np.ones((1, n), np.uint8))
-        walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, np.ones((n, 1), np.uint8))
+        walls |= close(walls, np.ones((1, n), np.uint8))
+        walls |= close(walls, np.ones((n, 1), np.uint8))
         if diagonal:
             d = np.eye(int(min(line, 0.8) / res * 0.7), dtype=np.uint8)
-            walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, d)
-            walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, d[::-1].copy())
+            walls |= close(walls, d)
+            walls |= close(walls, d[::-1].copy())
     walls = cv2.dilate(walls, np.ones((3, 3), np.uint8))
     flood = (1 - walls).astype(np.uint8)
     cv2.floodFill(flood, None, (0, 0), 2)
