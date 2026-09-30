@@ -45,12 +45,13 @@ def _walls(P, floor):
 
 
 def correct(frames, enabled=True, chunk_m=1.0, max_shift=0.05, res=0.01):
-    """frames: [(points (N,3) z up, camera centre (3,))] in capture order.
+    """frames: [(points (N,3) z up, camera centre (3,), *extra)] in capture order; extra items
+    (pixel coordinates, frame ids) are passed through untouched.
     Returns corrected frames and a list of per-chunk corrections (for the report)."""
     if not enabled or len(frames) < 2:
         return frames, []
-    cams = np.array([c for _, c in frames])
-    allz = np.concatenate([P[::20, 2] for P, _ in frames])
+    cams = np.array([f[1] for f in frames])
+    allz = np.concatenate([f[0][::20, 2] for f in frames])
     floor0, _ = estimate_floor_ceiling(allz)
     theta0 = None
     map_pts = []
@@ -87,9 +88,9 @@ def correct(frames, enabled=True, chunk_m=1.0, max_shift=0.05, res=0.01):
         if map_pts and theta0 is not None:
             dxy = _slide(np.concatenate(map_pts), _walls(Pm, floor0), theta0, max_shift, res)
         shift = np.array([dxy[0], dxy[1], dz])
-        new = [(move(frames[i][0]) + shift, move(frames[i][1]) + shift) for i in range(a, b)]
+        new = [(move(frames[i][0]) + shift, move(frames[i][1]) + shift, *frames[i][2:]) for i in range(a, b)]
         out += new
-        map_pts.append(_walls(np.concatenate([p for p, _ in new]), floor0)[::3])
+        map_pts.append(_walls(np.concatenate([f[0] for f in new]), floor0)[::3])
         prev_raw, prev_new = cams[b - 1], new[-1][1]
         log.append({"frames": [a, b], "yaw_deg": round(math.degrees(yaw), 3),
                     "shift_m": np.round(shift, 4).tolist()})

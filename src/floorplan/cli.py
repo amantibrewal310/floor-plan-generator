@@ -20,6 +20,7 @@ def main(argv=None):
                        help="assumed interior wall thickness (m) when stitching by doorway")
         p.add_argument("--no-drift-correction", action="store_true",
                        help="use logged/predicted poses as-is (ablation)")
+        p.add_argument("--no-damage", action="store_true", help="skip damage detection (faster)")
 
     p = sub.add_parser("lidar", help="Stray Scanner export folders, PLY/OBJ/GLB scans or RoomPlan JSON")
     add_common(p)
@@ -59,7 +60,8 @@ def main(argv=None):
         if missing:
             ap.error(f"input not found: {', '.join(missing)} "
                      f"(no sample data ships with the project; try `floorplan synth` to make some)")
-        kw = {"wall_thickness": a.wall_thickness, "drift_correction": not a.no_drift_correction}
+        kw = {"wall_thickness": a.wall_thickness, "drift_correction": not a.no_drift_correction,
+              "find_damage": not a.no_damage}
         if a.cmd == "lidar":
             kw["up"] = a.up
         else:
@@ -112,6 +114,14 @@ def _summary(result):
         print("  walls (cm, 90% interval): " + ", ".join(iv(w["length_m"]) for w in r["walls"]))
         for o in r["openings"]:
             print(f"  {o['type']} on {o['wall']}: {iv(o['width_m'])} cm")
+    for d in result["damage"]:
+        print(f"damage {d['id']}: {d['class']} on {d['surface']}, "
+              f"{d['width_m']['value'] * 100:.0f} x {d['height_m']['value'] * 100:.0f} cm (score {d['score']:.2f})")
+    for f in result["concealed_flags"]:
+        print(f"concealed {f['id']} [{f['rule']}] on {f['surface']}: {f['reason']}")
+    for sc in result["scope"]:
+        q = sc["quantity"]
+        print(f"scope {sc['id']} {sc['surface']}: {sc['item']} - {q['value']} {sc['unit']} [{q['lo']}, {q['hi']}]")
     for a in result["adjacency"]:
         print(f"adjacent: {' <-> '.join(a['rooms'])}")
     for line in result["stitching"]:

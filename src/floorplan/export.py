@@ -140,6 +140,11 @@ def write_svg(rooms: list[Room], path: Path, title="Floor plan", px_per_m=110.0,
                   f'font-weight="600" fill="#1f2933">{r.name}</text>')
         el.append(f'<text x="{cx:.1f}" y="{cy + 14:.1f}" text-anchor="middle" font-size="12" '
                   f'fill="#52606d">{r.area:.2f} m²{h}</text>')
+    for d in (data or {}).get("damage", []):  # damage: a numbered marker at the region
+        cx, cy = P(np.array(d["center"][:2]))
+        el.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="9" fill="#d64545" opacity="0.9"/>')
+        el.append(f'<text x="{cx:.1f}" y="{cy + 4:.1f}" text-anchor="middle" font-size="10" '
+                  f'font-weight="700" fill="#fff">{d["id"]}</text>')
     x0, y0 = 16, H - 16  # 1 m scale bar
     el.append(f'<line x1="{x0}" y1="{y0}" x2="{x0 + px_per_m:.0f}" y2="{y0}" stroke="#222" stroke-width="3"/>')
     el.append(f'<text x="{x0 + px_per_m + 8:.0f}" y="{y0 + 4}" font-size="12" fill="#222">1 m</text>')

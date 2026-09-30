@@ -144,7 +144,8 @@ CONVENTIONS = {"arkit": np.diag([1.0, -1.0, -1.0]), "opencv": np.eye(3)}
 
 
 def load_stray(folder: Path, max_frames=400, stride_px=2, conf_min=2, max_depth=5.0):
-    """Stray Scanner export -> per-frame (points, camera centre) in a z-up world, in capture order.
+    """Stray Scanner export -> per-frame (points, camera centre, pixel uv in 0..1, frame number)
+    in a z-up world, in capture order.
 
     Only confident depth (LiDAR confidence 2 by default) is kept: glass, mirrors and dark or
     shiny surfaces come back with low confidence, so they drop out here instead of making
@@ -174,16 +175,33 @@ def load_stray(folder: Path, max_frames=400, stride_px=2, conf_min=2, max_depth=
         if conf is not None:
             ok &= conf[v, u] >= conf_min
         X = np.column_stack([(u[ok] + 0.5 - cx) / fx * zz[ok], (v[ok] + 0.5 - cy) / fy * zz[ok], zz[ok]])
-        frames.append((X, _quat_to_mat(*r[5:9]), r[2:5].copy()))
+        uv = np.column_stack([(u[ok] + 0.5) / z.shape[1], (v[ok] + 0.5) / z.shape[0]])
+        frames.append((X, _quat_to_mat(*r[5:9]), r[2:5].copy(), uv, k))
     if not frames:
         raise ValueError(f"no depth frames found in {folder}")
     conv = _pick_convention(frames)
     Y2Z = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0.0]])  # ARKit world (y up) -> z up
     out = []
-    for X, R, t in frames:
+    for X, R, t, uv, k in frames:
         Rw = Y2Z @ R @ CONVENTIONS[conv]
-        out.append((X @ Rw.T + Y2Z @ t, Y2Z @ t))
+        out.append((X @ Rw.T + Y2Z @ t, Y2Z @ t, uv, k))
     return out
+
+
+def stray_rgb(folder: Path, frame_ids: list[int]) -> list[np.ndarray]:
+    """RGB frames (by frame number) from a Stray Scanner rgb.mp4."""
+    want, got = set(frame_ids), {}
+    cap = cv2.VideoCapture(str(Path(folder) / "rgb.mp4"))
+    k = 0
+    while want - got.keys():
+        ok, bgr = cap.read()
+        if not ok:
+            break
+        if k in want:
+            got[k] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        k += 1
+    cap.release()
+    return [got[i] for i in frame_ids if i in got]
 
 
 def _pick_convention(frames, voxel=0.05):
@@ -192,7 +210,7 @@ def _pick_convention(frames, voxel=0.05):
     pick = frames[:: max(1, len(frames) // 25)]
     best, best_n = None, None
     for name, C in CONVENTIONS.items():
-        P = np.concatenate([X[::4] @ (R @ C).T + t for X, R, t in pick])
+        P = np.concatenate([f[0][::4] @ (f[1] @ C).T + f[2] for f in pick])
         n = len(np.unique(np.floor(P / voxel).astype(np.int64), axis=0))
         if best_n is None or n < best_n:
             best, best_n = name, n

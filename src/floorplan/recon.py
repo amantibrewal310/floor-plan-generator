@@ -44,6 +44,14 @@ def list_images(folder: Path) -> list[Path]:
     return files
 
 
+def load_rgb(path: Path) -> np.ndarray:
+    from PIL import Image, ImageOps
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    return np.array(ImageOps.exif_transpose(Image.open(path)).convert("RGB"))
+
+
 def predict(images: list[Path], cache_dir: Path = CACHE_DIR) -> Prediction:
     """Run MapAnything on `images`, or replay the cached result for exactly these files."""
     h = hashlib.sha256(MODEL_ID.encode())
@@ -131,6 +139,17 @@ def marker_scale(pred: Prediction, marker_size: float) -> tuple[float, int] | No
     if not sides:
         return None
     return marker_size / float(np.median(sides)), len(sides)
+
+
+def view_points(pred: Prediction, R: np.ndarray, v: int, conf_pct=10, stride=2):
+    """Points of view v rotated by R (z up), and the pixel each came from, normalised to 0..1."""
+    thr = np.percentile(pred.conf[pred.mask], conf_pct)
+    ok = pred.mask[v] & (pred.conf[v] >= thr)
+    ok[1::stride] = False
+    ok[:, 1::stride] = False
+    y, x = np.nonzero(ok)
+    h, w = ok.shape
+    return pred.pts[v][ok] @ R.T, np.column_stack([(x + 0.5) / w, (y + 0.5) / h])
 
 
 def metric_points(pred: Prediction, R: np.ndarray, views=None, max_points=1_500_000,

@@ -50,8 +50,12 @@ class Room:
         return out
 
     def transformed(self, R: np.ndarray, t: np.ndarray) -> "Room":
+        extra = dict(self.extra)
+        if "damage" in extra:
+            extra["damage"] = [{**d, "center": np.r_[R @ d["center"][:2] + t, d["center"][2]]}
+                               for d in extra["damage"]]
         return Room(self.polygon @ R.T + t, list(self.doors), self.height, self.name, list(self.windows),
-                    list(self.wall_support), self.extra)
+                    list(self.wall_support), extra)
 
 
 def estimate_floor_ceiling(z: np.ndarray, bin_size=0.01) -> tuple[float, float | None]:

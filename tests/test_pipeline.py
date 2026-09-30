@@ -63,15 +63,17 @@ def test_photos_six_stills_with_marker(tmp_path):
     result = run("photos", [folder], tmp_path / "out", marker_size=sc.marker_size)
     room = result["rooms"][0]
     assert room["name"] == "living"
-    assert abs(room["area_m2"] - 4.2 * 3.5) / (4.2 * 3.5) < 0.2, room["area_m2"]
+    area = room["floor_area_m2"]["value"]
+    assert abs(area - 4.2 * 3.5) / (4.2 * 3.5) < 0.2, area
 
 
 def test_stray_lidar_drift_correction(tmp_path):
     """Raw depth + drifting poses: correction must restore the plan that poses-as-is bend."""
     sc = synth.make_scene("apartment")
     stray = synth.write_stray(sc, tmp_path / "walk", drift_deg_per_m=0.8)
-    off = evaluate(run("lidar", [stray], tmp_path / "off", drift_correction=False), sc.ground_truth())
-    on = run("lidar", [stray], tmp_path / "on")
+    off = evaluate(run("lidar", [stray], tmp_path / "off", drift_correction=False, find_damage=False),
+                   sc.ground_truth())
+    on = run("lidar", [stray], tmp_path / "on", find_damage=False)
     assert on["captures"][0]["drift"]["final_yaw_correction_deg"] < -10  # it undid real drift
     m = _check(on, sc, wall_cm=3.0, corner_cm=3.0)
     assert off["corner_rmse_cm"] > 2 * m["corner_rmse_cm"], (off, m)
@@ -89,3 +91,24 @@ def test_output_matches_published_schema(tmp_path):
     for r in result["rooms"]:
         for w in r["walls"]:
             assert w["length_m"]["lo"] < w["length_m"]["value"] < w["length_m"]["hi"]
+
+
+def test_damage_lands_on_surface_with_metric_extent_and_rules():
+    """A detection box over a known wall patch -> right wall, right size, rule R2, scope."""
+    from floorplan import damage, export
+    from floorplan.plan import Room
+    room = Room(np.array([[0, 0], [4.0, 0], [4.0, 3.0], [0, 3.0]]), height=2.5)
+    # one view looking at wall 0 (y = 0): pixel u <-> x in [0, 4], v <-> z in [2.5, 0]
+    u, v = np.meshgrid(np.linspace(0, 1, 200), np.linspace(0, 1, 120))
+    X = np.column_stack([u.ravel() * 4.0, np.zeros(u.size), (1 - v.ravel()) * 2.5])
+    uv = np.column_stack([u.ravel(), v.ravel()])
+    box = np.array([1.0 / 4, 1 - 0.5 / 2.5, 2.0 / 4, 1 - 0.1 / 2.5])  # x 1..2 m, z 0.1..0.5 m
+    damage.locate([[("water_stain", 0.8, box)]], [(X, None, uv)], [room], ["IMG_1.jpg"])
+    data = export.to_dict([room], {"stitching": [], "captures": []}, tier="lidar")
+    damage.regions([room], data, "lidar")
+    (d,) = data["damage"]
+    assert d["surface"] == "R1.W1"
+    assert abs(d["width_m"]["value"] - 1.0) < 0.06 and abs(d["height_m"]["value"] - 0.4) < 0.04, d
+    assert [f["rule"] for f in data["concealed_flags"]] == ["R2 damp at wall base"]
+    items = {s["item"] for s in data["scope"]}
+    assert "Repaint whole surface" in items and any(i.startswith("Investigate") for i in items)
