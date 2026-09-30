@@ -18,8 +18,10 @@ def main(argv=None):
         p.add_argument("-o", "--out", type=Path, default=Path("out"))
         p.add_argument("--wall-thickness", type=float, default=0.12,
                        help="assumed interior wall thickness (m) when stitching by doorway")
+        p.add_argument("--no-drift-correction", action="store_true",
+                       help="use logged/predicted poses as-is (ablation)")
 
-    p = sub.add_parser("lidar", help="PLY/OBJ/GLB scans or RoomPlan JSON exports")
+    p = sub.add_parser("lidar", help="Stray Scanner export folders, PLY/OBJ/GLB scans or RoomPlan JSON")
     add_common(p)
     p.add_argument("--up", default="auto", help="up axis of the scan: auto, +y, +z, ...")
 
@@ -41,7 +43,7 @@ def main(argv=None):
 
     p = sub.add_parser("synth", help="generate a synthetic capture with ground truth")
     p.add_argument("scene", choices=["rect", "lshape", "apartment"])
-    p.add_argument("tier", choices=["photos", "video", "lidar", "roomplan"])
+    p.add_argument("tier", choices=["photos", "video", "lidar", "roomplan", "stray"])
     p.add_argument("-o", "--out", type=Path, default=Path("data"))
 
     p = sub.add_parser("benchmark", help="run every tier on synthetic scenes and report errors")
@@ -57,7 +59,7 @@ def main(argv=None):
         if missing:
             ap.error(f"input not found: {', '.join(missing)} "
                      f"(no sample data ships with the project; try `floorplan synth` to make some)")
-        kw = {"wall_thickness": a.wall_thickness}
+        kw = {"wall_thickness": a.wall_thickness, "drift_correction": not a.no_drift_correction}
         if a.cmd == "lidar":
             kw["up"] = a.up
         else:
@@ -87,6 +89,8 @@ def main(argv=None):
         elif a.tier == "lidar":
             paths = [synth.write_lidar_ply(sc, d / f"scan_{i}.ply", rooms=[i], seed=i)
                      for i in range(len(sc.rooms))]
+        elif a.tier == "stray":
+            paths = [synth.write_stray(sc, d / "stray")]
         else:
             paths = [synth.write_roomplan_json(sc, d / "room.json")]
         (d / "ground_truth.json").write_text(json.dumps(sc.ground_truth(), indent=2))

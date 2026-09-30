@@ -63,3 +63,14 @@ def test_photos_six_stills_with_marker(tmp_path):
     room = result["rooms"][0]
     assert room["name"] == "living"
     assert abs(room["area_m2"] - 4.2 * 3.5) / (4.2 * 3.5) < 0.2, room["area_m2"]
+
+
+def test_stray_lidar_drift_correction(tmp_path):
+    """Raw depth + drifting poses: correction must restore the plan that poses-as-is bend."""
+    sc = synth.make_scene("apartment")
+    stray = synth.write_stray(sc, tmp_path / "walk", drift_deg_per_m=0.8)
+    off = evaluate(run("lidar", [stray], tmp_path / "off", drift_correction=False), sc.ground_truth())
+    on = run("lidar", [stray], tmp_path / "on")
+    assert on["captures"][0]["drift"]["final_yaw_correction_deg"] < -10  # it undid real drift
+    m = _check(on, sc, wall_cm=3.0, corner_cm=3.0)
+    assert off["corner_rmse_cm"] > 2 * m["corner_rmse_cm"], (off, m)

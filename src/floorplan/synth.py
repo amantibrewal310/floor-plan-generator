@@ -153,7 +153,7 @@ class Renderer:
     def focal_35mm(self) -> float:
         return self.f / self.w * 36.0
 
-    def render(self, cam: np.ndarray, yaw: float, pitch: float) -> np.ndarray:
+    def render(self, cam: np.ndarray, yaw: float, pitch: float, depth=False):
         W, H, ss = self.w * self.ss, self.h * self.ss, self.ss
         f = self.f * ss
         u, v = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
@@ -213,8 +213,11 @@ class Renderer:
                 py = ((half - ly) / (2 * half) * tile.shape[0]).astype(np.float32)
                 s = cv2.remap(tile, px, py, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
                 img[m] = s[m]
-        img = cv2.resize(img, (self.w, self.h), interpolation=cv2.INTER_AREA)
-        return img.astype(np.uint8)
+        img = cv2.resize(img, (self.w, self.h), interpolation=cv2.INTER_AREA).astype(np.uint8)
+        if depth:  # rays are (x, y, 1) in camera coordinates, so t is already z-depth
+            z = np.where(np.isfinite(best_t), best_t, 0.0)[ss // 2::ss, ss // 2::ss]
+            return img, z.astype(np.float32)
+        return img
 
 
 def camera_path(waypoints, step: float) -> np.ndarray:
@@ -263,17 +266,15 @@ def _save_jpeg_with_focal(bgr, path, focal_35mm):
     im.save(path, quality=92, exif=exif)
 
 
-def write_video(scene: Scene, out: Path, fps=15, speed=0.35, seed=0) -> Path:
-    """One continuous walkthrough of every waypoint loop in the scene (rooms joined through doors)."""
-    rng = np.random.default_rng(seed)
-    r = Renderer(scene, width=1280, height=720, hfov_deg=70.0, supersample=1)
-    step = speed / fps
+def walk_path(scene: Scene, step: float):
+    """Every waypoint loop in turn, walking between rooms through the connecting door.
+    Returns positions and, per position, a heading to look along (None = look at the room)."""
     loops = [camera_path(w, step) for w in scene.walk]
-    path, look = [], []  # look=None -> aim at the room centre, else aim along travel
+    path, look = [], []
     for i, loop in enumerate(loops):
         path += list(loop)
         look += [None] * len(loop)
-        if i + 1 < len(loops):  # walk to the next room through the connecting door
+        if i + 1 < len(loops):
             door = next((p0 + p1) / 2 for _, _, p0, p1 in scene.door_segments())
             legs = [loop[-1], door - np.array([0.6, 0]), door + np.array([0.6, 0]), loops[i + 1][0]]
             for a, b in zip(legs[:-1], legs[1:]):
@@ -281,6 +282,14 @@ def write_video(scene: Scene, out: Path, fps=15, speed=0.35, seed=0) -> Path:
                 heading = math.atan2(b[1] - a[1], b[0] - a[0])
                 path += [a + (b - a) * k / n for k in range(n)]
                 look += [heading] * n
+    return path, look
+
+
+def write_video(scene: Scene, out: Path, fps=15, speed=0.35, seed=0) -> Path:
+    """One continuous walkthrough of every waypoint loop in the scene (rooms joined through doors)."""
+    rng = np.random.default_rng(seed)
+    r = Renderer(scene, width=1280, height=720, hfov_deg=70.0, supersample=1)
+    path, look = walk_path(scene, speed / fps)
     out.parent.mkdir(parents=True, exist_ok=True)
     vw = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"), fps, (r.w, r.h))
     yaw = None
@@ -396,4 +405,75 @@ def write_roomplan_json(scene: Scene, out: Path, seed=0) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"version": 2, "walls": walls, "doors": doors, "windows": [],
                                "openings": [], "objects": [], "floors": []}, indent=1))
+    return out
+
+
+# ---------------------------------------------------------------- stray scanner (raw LiDAR)
+
+def _rz(a):
+    c, s = math.cos(a), math.sin(a)
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.0]])
+
+
+def _quat(R):
+    """Rotation matrix -> (qx, qy, qz, qw)."""
+    w = math.sqrt(max(0.0, 1 + R[0, 0] + R[1, 1] + R[2, 2])) / 2
+    x = math.copysign(math.sqrt(max(0.0, 1 + R[0, 0] - R[1, 1] - R[2, 2])) / 2, R[2, 1] - R[1, 2])
+    y = math.copysign(math.sqrt(max(0.0, 1 - R[0, 0] + R[1, 1] - R[2, 2])) / 2, R[0, 2] - R[2, 0])
+    z = math.copysign(math.sqrt(max(0.0, 1 - R[0, 0] - R[1, 1] + R[2, 2])) / 2, R[1, 0] - R[0, 1])
+    return x, y, z, w
+
+
+def write_stray(scene: Scene, out: Path, fps=6, speed=0.35, drift_deg_per_m=0.8, seed=0) -> Path:
+    """A Stray Scanner export of one walkthrough: depth/*.png (uint16 mm, 256x192),
+    confidence/*.png, odometry.csv (ARKit camera-to-world, y up) and rgb.mp4.
+
+    The depth is rendered from the true trajectory, but the logged poses drift like visual-inertial
+    odometry does: a heading error growing with distance walked, plus 1% scale and slight
+    vertical creep. That is what the drift correction has to undo."""
+    rng = np.random.default_rng(seed)
+    hfov = 63.0
+    rgb, dep = Renderer(scene, 640, 480, hfov, 1), Renderer(scene, 256, 192, hfov, 1)
+    path, look = walk_path(scene, speed / fps)
+    (out / "depth").mkdir(parents=True, exist_ok=True)
+    (out / "confidence").mkdir(exist_ok=True)
+    vw = cv2.VideoWriter(str(out / "rgb.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (rgb.w, rgb.h))
+    M = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0.0]])  # z-up world -> ARKit world (y up)
+    G, g0 = _rz(rng.uniform(-math.pi, math.pi)), rng.uniform(-2, 2, 3)  # arbitrary session origin
+    fx = rgb.w / 2 / math.tan(math.radians(hfov) / 2)
+    rows = ["timestamp, frame, x, y, z, qx, qy, qz, qw, fx, fy, cx, cy"]
+    yaw, walked, p_drift = None, 0.0, None
+    for k, (p, heading) in enumerate(zip(path, look)):
+        target = heading if heading is not None else _look_yaw(p, _room_of(p, scene)) + 0.45 * math.sin(k / fps * 0.8)
+        yaw = target if yaw is None else yaw + math.remainder(target - yaw, 2 * math.pi) * 0.25
+        cam = np.array([p[0], p[1], 1.45 + 0.02 * math.sin(k / fps * 5)])
+        pitch = -0.1 + 0.25 * math.sin(k / fps * 0.7)  # looks up at the ceiling and down at the floor
+        img = rgb.render(cam, yaw, pitch)
+        vw.write(np.clip(img + rng.normal(0, 2.0, img.shape), 0, 255).astype(np.uint8))
+        _, z = dep.render(cam, yaw, pitch, depth=True)
+        z = z * (1 + rng.normal(0, 0.004, z.shape)) + rng.normal(0, 0.004, z.shape)  # LiDAR noise
+        cv2.imwrite(str(out / "depth" / f"{k:06d}.png"), np.clip(z * 1000, 0, 65535).astype(np.uint16))
+        cv2.imwrite(str(out / "confidence" / f"{k:06d}.png"), np.where(z > 0, 2, 0).astype(np.uint8))
+
+        # dead-reckoned pose: integrate the true steps through a slowly rotating, stretched frame
+        if p_drift is None:
+            p_drift, prev = cam.copy(), cam
+        else:
+            step = cam - prev
+            walked += float(np.linalg.norm(step[:2]))
+            p_drift = p_drift + _rz(math.radians(drift_deg_per_m) * walked) @ step * 1.01 + [0, 0, 0.002 * np.linalg.norm(step[:2])]
+            prev = cam
+        err = _rz(math.radians(drift_deg_per_m) * walked)
+        fwd = np.array([math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), math.sin(pitch)])
+        right = np.array([math.sin(yaw), -math.cos(yaw), 0.0])
+        down = np.cross(fwd, right)
+        R = M @ G @ err @ np.column_stack([right, -down, -fwd])  # ARKit camera: x right, y up, z back
+        t = M @ (G @ p_drift + g0)
+        q = _quat(R)
+        rows.append(f"{k / fps:.4f}, {k:06d}, {t[0]:.6f}, {t[1]:.6f}, {t[2]:.6f}, "
+                    f"{q[0]:.7f}, {q[1]:.7f}, {q[2]:.7f}, {q[3]:.7f}, {fx:.3f}, {fx:.3f}, {rgb.w / 2}, {rgb.h / 2}")
+    vw.release()
+    (out / "odometry.csv").write_text("\n".join(rows) + "\n")
+    K = np.array([[fx, 0, rgb.w / 2], [0, fx, rgb.h / 2], [0, 0, 1]])
+    np.savetxt(out / "camera_matrix.csv", K, delimiter=",")
     return out

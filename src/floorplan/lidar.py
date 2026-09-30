@@ -7,8 +7,10 @@ points to plan.extract_rooms.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 AXES = {"x": 0, "y": 1, "z": 2}
@@ -56,24 +58,29 @@ def _guess_up_axis(pts) -> int:
 
 
 def _level(P: np.ndarray) -> np.ndarray:
+    return level(P)[0]
+
+
+def level(P: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Rotate so the floor plane is exactly horizontal: (levelled points, rotation)."""
     from .plan import estimate_floor_ceiling
 
     floor, _ = estimate_floor_ceiling(P[:, 2])
     near = P[np.abs(P[:, 2] - floor) < 0.04]
     if len(near) < 100:
-        return P
+        return P, np.eye(3)
     m = near.mean(0)
     n = np.linalg.svd(near - m, full_matrices=False)[2][2]
     n = n if n[2] > 0 else -n
     if n[2] < np.cos(np.radians(10)):  # not a floor: leave it alone
-        return P
+        return P, np.eye(3)
     v = np.cross(n, [0, 0, 1.0])
     s, c = np.linalg.norm(v), n[2]
     if s < 1e-9:
-        return P
+        return P, np.eye(3)
     K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
     R = np.eye(3) + K + K @ K * ((1 - c) / s**2)
-    return P @ R.T
+    return P @ R.T, R
 
 
 def roomplan_points(path: Path, spacing=0.02) -> np.ndarray:
@@ -120,3 +127,73 @@ def roomplan_points(path: Path, spacing=0.02) -> np.ndarray:
     floor = np.column_stack([gx.ravel(), np.full(gx.size, y_floor), gz.ravel()])
     ceil = np.column_stack([gx.ravel(), np.full(gx.size, y_ceil), gz.ravel()])
     return gravity_align(np.concatenate([P, floor, ceil]), "+y")
+
+
+# ---------------------------------------------------------------- raw depth + poses (Stray Scanner)
+
+def _quat_to_mat(x, y, z, w):
+    n = math.sqrt(x * x + y * y + z * z + w * w)
+    x, y, z, w = x / n, y / n, z / n, w / n
+    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+
+
+# camera axes of the logged pose -> OpenCV camera axes (x right, y down, z forward)
+CONVENTIONS = {"arkit": np.diag([1.0, -1.0, -1.0]), "opencv": np.eye(3)}
+
+
+def load_stray(folder: Path, max_frames=400, stride_px=2, conf_min=2, max_depth=5.0):
+    """Stray Scanner export -> per-frame (points, camera centre) in a z-up world, in capture order.
+
+    Only confident depth (LiDAR confidence 2 by default) is kept: glass, mirrors and dark or
+    shiny surfaces come back with low confidence, so they drop out here instead of making
+    phantom walls. Depth further than `max_depth` is noisy and dropped too."""
+    folder = Path(folder)
+    rows = np.genfromtxt(folder / "odometry.csv", delimiter=",", skip_header=1)
+    rows = np.atleast_2d(rows)
+    step = max(1, int(math.ceil(len(rows) / max_frames)))
+    rows = rows[::step]
+    cap = cv2.VideoCapture(str(folder / "rgb.mp4"))
+    rgb_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1920.0
+    cap.release()
+    frames = []
+    for r in rows:
+        k = int(r[1])
+        depth = cv2.imread(str(folder / "depth" / f"{k:06d}.png"), cv2.IMREAD_UNCHANGED)
+        if depth is None:
+            continue
+        z = depth.astype(np.float32) / 1000.0
+        conf_path = folder / "confidence" / f"{k:06d}.png"
+        conf = cv2.imread(str(conf_path), cv2.IMREAD_UNCHANGED) if conf_path.exists() else None
+        s = z.shape[1] / rgb_w  # intrinsics are logged for the RGB resolution
+        fx, fy, cx, cy = r[9] * s, r[10] * s, r[11] * s, r[12] * s
+        v, u = np.mgrid[0:z.shape[0]:stride_px, 0:z.shape[1]:stride_px]
+        zz = z[v, u]
+        ok = (zz > 0.1) & (zz < max_depth)
+        if conf is not None:
+            ok &= conf[v, u] >= conf_min
+        X = np.column_stack([(u[ok] + 0.5 - cx) / fx * zz[ok], (v[ok] + 0.5 - cy) / fy * zz[ok], zz[ok]])
+        frames.append((X, _quat_to_mat(*r[5:9]), r[2:5].copy()))
+    if not frames:
+        raise ValueError(f"no depth frames found in {folder}")
+    conv = _pick_convention(frames)
+    Y2Z = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0.0]])  # ARKit world (y up) -> z up
+    out = []
+    for X, R, t in frames:
+        Rw = Y2Z @ R @ CONVENTIONS[conv]
+        out.append((X @ Rw.T + Y2Z @ t, Y2Z @ t))
+    return out
+
+
+def _pick_convention(frames, voxel=0.05):
+    """The docs do not pin down the camera axes of the logged pose; the right choice is the one
+    under which frames from across the capture agree (fewest occupied voxels)."""
+    pick = frames[:: max(1, len(frames) // 25)]
+    best, best_n = None, None
+    for name, C in CONVENTIONS.items():
+        P = np.concatenate([X[::4] @ (R @ C).T + t for X, R, t in pick])
+        n = len(np.unique(np.floor(P / voxel).astype(np.int64), axis=0))
+        if best_n is None or n < best_n:
+            best, best_n = name, n
+    return best
