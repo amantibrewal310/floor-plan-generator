@@ -51,6 +51,8 @@ def main(argv=None):
     p.add_argument("-o", "--out", type=Path)
     p.add_argument("--no-damage", action="store_true")
 
+    sub.add_parser("setup", help="download the model weights (about 5 GB, once)")
+
     p = sub.add_parser("markers", help="write printable ArUco markers (A4, 300 dpi)")
     p.add_argument("-o", "--out", type=Path, default=Path("markers"))
     p.add_argument("--size-mm", type=int, default=180)
@@ -105,6 +107,13 @@ def main(argv=None):
     elif a.cmd == "bench":
         from .bench import run_bench
         run_bench(a.manifest, a.out, damage=not a.no_damage)
+    elif a.cmd == "setup":
+        from . import damage, recon
+        print(f"fetching {recon.MODEL_ID} (3D reconstruction) ...", flush=True)
+        recon.load_model()
+        print(f"fetching {damage.DETECTOR_ID} (damage detection) ...", flush=True)
+        damage.load_detector()
+        print("done: weights are cached under ~/.cache (huggingface, torch hub)")
     elif a.cmd == "markers":
         from .media import write_marker_sheet
         write_marker_sheet(a.out, range(a.count), a.size_mm)

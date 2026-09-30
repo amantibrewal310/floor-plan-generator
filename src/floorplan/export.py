@@ -92,7 +92,7 @@ def write_svg(rooms: list[Room], path: Path, title="Floor plan", px_per_m=110.0,
 
     el = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W:.0f}" height="{H:.0f}" '
           f'viewBox="0 0 {W:.0f} {H:.0f}" font-family="Helvetica, Arial, sans-serif">',
-          f'<rect width="100%" height="100%" fill="#fbfaf7"/>',
+          '<rect width="100%" height="100%" fill="#fbfaf7"/>',
           f'<text x="16" y="28" font-size="18" font-weight="600" fill="#222">{title}</text>']
     for r in rooms:
         d = " ".join(f"{x:.1f},{y:.1f}" for x, y in map(P, r.polygon))

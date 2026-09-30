@@ -17,10 +17,13 @@ import math
 
 Z90 = 1.645
 
+# Priors until the real benchmark calibrates them. The photo and video numbers are deliberately
+# wide: a learned metric scale on a room it has never seen can be several percent off, and a
+# confident wrong answer costs more than an honest wide one.
 TIERS = {
     "lidar": {"scale": 0.002, "abs": 0.005, "opening": 0.008, "height": 0.003},
-    "video": {"scale": 0.012, "abs": 0.012, "opening": 0.020, "height": 0.012},
-    "photos": {"scale": 0.030, "abs": 0.020, "opening": 0.030, "height": 0.030},
+    "video": {"scale": 0.025, "abs": 0.015, "opening": 0.025, "height": 0.025},
+    "photos": {"scale": 0.040, "abs": 0.025, "opening": 0.035, "height": 0.040},
 }
 # a marker of known size replaces the model's scale estimate
 MARKER_SCALE = 0.006

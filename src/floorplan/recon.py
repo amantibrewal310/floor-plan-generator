@@ -76,17 +76,24 @@ def predict(images: list[Path], cache_dir: Path = CACHE_DIR) -> Prediction:
 _MODEL = None
 
 
-def _infer(images: list[Path]) -> Prediction:
+def load_model():
+    """MapAnything on the best available device (downloads the weights the first time)."""
     import torch
     from mapanything.models import MapAnything
-    from mapanything.utils.image import load_images
 
     global _MODEL
     dev = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     if _MODEL is None:
         _MODEL = MapAnything.from_pretrained(MODEL_ID).to(dev).eval()
+    return _MODEL, dev
+
+
+def _infer(images: list[Path]) -> Prediction:
+    from mapanything.utils.image import load_images
+
+    model, dev = load_model()
     views = load_images([str(p) for p in images])
-    out = _MODEL.infer(views, memory_efficient_inference=True, use_amp=dev != "cpu",
+    out = model.infer(views, memory_efficient_inference=True, use_amp=dev != "cpu",
                        amp_dtype="bf16" if dev == "cuda" else "fp16", apply_mask=True, mask_edges=True)
 
     def stack(key):

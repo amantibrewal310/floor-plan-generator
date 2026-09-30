@@ -28,8 +28,7 @@ MIN_SCORE = 0.30
 _DET = None
 
 
-def detect(images: list[np.ndarray], min_score=MIN_SCORE) -> list[list[tuple[str, float, np.ndarray]]]:
-    """Per image: [(class, score, box (x0, y0, x1, y1) normalised to 0..1)]."""
+def load_detector():
     import torch
     from transformers import Owlv2ForObjectDetection, Owlv2Processor
 
@@ -37,8 +36,15 @@ def detect(images: list[np.ndarray], min_score=MIN_SCORE) -> list[list[tuple[str
     dev = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     if _DET is None:
         _DET = (Owlv2Processor.from_pretrained(DETECTOR_ID),
-                Owlv2ForObjectDetection.from_pretrained(DETECTOR_ID).to(dev).eval())
-    proc, model = _DET
+                Owlv2ForObjectDetection.from_pretrained(DETECTOR_ID).to(dev).eval(), dev)
+    return _DET
+
+
+def detect(images: list[np.ndarray], min_score=MIN_SCORE) -> list[list[tuple[str, float, np.ndarray]]]:
+    """Per image: [(class, score, box (x0, y0, x1, y1) normalised to 0..1)]."""
+    import torch
+
+    proc, model, dev = load_detector()
     labels = [(c, p) for c, ps in PROMPTS.items() for p in ps]
     out = []
     for img in images:
