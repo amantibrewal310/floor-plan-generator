@@ -24,7 +24,10 @@ PROMPTS = {
     "peeling_paint": ["peeling paint", "bubbling paint"],
     "hole": ["a hole in drywall", "a hole in a wall"],
 }
-MIN_SCORE = 0.30
+MIN_SCORE = 0.40
+# a region only one view saw is kept only when the detector is sure; chance textures and
+# shadows fire in one frame, real damage is seen again from the next position
+SINGLE_VIEW_SCORE = 0.60
 _DET = None
 
 
@@ -156,6 +159,8 @@ def regions(rooms, data, tier) -> None:
     p = TIERS[tier]
     for room, dr in zip(rooms, data["rooms"]):
         for reg in room.extra.get("damage", []):
+            if len(reg["views"]) < 2 and reg["score"] < SINGLE_VIEW_SCORE:
+                continue
             w, h = np.maximum(reg["hi"] - reg["lo"], 0.02)
             surf = f"{dr['id']}.W{reg['surface'] + 1}" if isinstance(reg["surface"], int) \
                 else f"{dr['id']}.{reg['surface']}"
@@ -276,10 +281,14 @@ def scope(data) -> list[dict]:
     out = []
     for it in items.values():
         out.append({"id": f"S{len(out) + 1}", **it})
+    by_surface = {}  # one investigation per surface, however many rules fired there
     for f in data.get("concealed_flags", []):
-        out.append({"id": f"S{len(out) + 1}", "surface": f["surface"],
-                    "item": f"Investigate ({f['rule']}): moisture meter / opening-up survey",
-                    "quantity": {"value": 1, "lo": 1, "hi": 1}, "unit": "each", "from": [f["id"]]})
+        by_surface.setdefault(f["surface"], []).append(f)
+    for surf, fs in by_surface.items():
+        rules = ", ".join(f["rule"].split(" ")[0] for f in fs)
+        out.append({"id": f"S{len(out) + 1}", "surface": surf,
+                    "item": f"Investigate ({rules}): moisture meter / opening-up survey",
+                    "quantity": {"value": 1, "lo": 1, "hi": 1}, "unit": "each", "from": [f["id"] for f in fs]})
     return out
 
 

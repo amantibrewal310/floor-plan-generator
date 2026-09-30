@@ -110,6 +110,15 @@ Candidates already visible on synthetic data:
   the model's scale was 39% too large without a marker. With the marker the walls came out 3 to 7%
   long. Real photos should be much closer, but that is exactly what the benchmark has to show.
 
+Synthetic video (`floorplan synth apartment video`, 61 keyframes, printed marker in view, 3 min 45 s
+on an M5, 58 s on a cached rerun): both rooms found, doors and adjacency right, drift correction
+applied 3.3° of heading. But room 1 came out 4.19 x 3.92 m against 4.00 x 3.60 m (+5% and +9%, so
+not a single scale error) and room 2 gained a spurious jog. The ceiling was never in view. The
+renders are random confetti textures that look nothing like a room, so this says little about
+real captures. It is recorded here because it is the only video number we have so far. The same
+run exposed the damage detector firing on 14 texture patches. A region seen in one view now needs
+a score of 0.6, and 0.4 otherwise, which cut that to one.
+
 ## 7. Known failure modes
 
 | Condition | What happens | What we do |

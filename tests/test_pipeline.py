@@ -103,7 +103,8 @@ def test_damage_lands_on_surface_with_metric_extent_and_rules():
     X = np.column_stack([u.ravel() * 4.0, np.zeros(u.size), (1 - v.ravel()) * 2.5])
     uv = np.column_stack([u.ravel(), v.ravel()])
     box = np.array([1.0 / 4, 1 - 0.5 / 2.5, 2.0 / 4, 1 - 0.1 / 2.5])  # x 1..2 m, z 0.1..0.5 m
-    damage.locate([[("water_stain", 0.8, box)]], [(X, None, uv)], [room], ["IMG_1.jpg"])
+    damage.locate([[("water_stain", 0.8, box)], [("water_stain", 0.5, box)]], [(X, None, uv)] * 2, [room],
+                  ["IMG_1.jpg", "IMG_2.jpg"])
     data = export.to_dict([room], {"stitching": [], "captures": []}, tier="lidar")
     damage.regions([room], data, "lidar")
     (d,) = data["damage"]
@@ -150,3 +151,16 @@ def test_bench_manifest_end_to_end(tmp_path):
         assert section in report
     assert res["scan0"]["competitor"]["beat_or_tie_pct"] >= 70
     assert res["scan1"]["repeat"]["pass"]
+
+
+def test_damage_seen_once_needs_a_confident_detector():
+    from floorplan import damage, export
+    from floorplan.plan import Room
+    room = Room(np.array([[0, 0], [4.0, 0], [4.0, 3.0], [0, 3.0]]), height=2.5)
+    u, v = np.meshgrid(np.linspace(0, 1, 100), np.linspace(0, 1, 60))
+    X = np.column_stack([u.ravel() * 4.0, np.zeros(u.size), (1 - v.ravel()) * 2.5])
+    uv = np.column_stack([u.ravel(), v.ravel()])
+    damage.locate([[("crack", 0.45, np.array([0.1, 0.1, 0.3, 0.5]))]], [(X, None, uv)], [room], ["a.jpg"])
+    data = export.to_dict([room], {"stitching": [], "captures": []}, tier="video")
+    damage.regions([room], data, "video")
+    assert data["damage"] == [] and data["scope"] == []
