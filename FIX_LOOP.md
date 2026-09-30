@@ -71,11 +71,63 @@ is one that needs none.
 
 ## 4. Result
 
-(After the fix.)
+Two attempts, both in the history.
+
+**Attempt 1, the declared change** (commit `8b84ebc`): door-closing kernels skip cells of walls
+running the other way.
+
+| capture | inside % (before → after) | adjacent pairs | components |
+|---|---|---|---|
+| c00a170fe1 | 72.9 → 72.9 | 0 → 0 | 2 → 2 |
+| 1a8384c3f6 | 80.8 → 83.8 | 0 → 0 | 6 → 5 |
+| c7d28f72c6 | 59.5 → 59.8 | 0 → 0 | 5 → 5 |
+
+The prediction was wrong. Camera positions on "wall" after closing stayed at 29 to 38% on
+c7d28f72c6, against a predicted 5% at most. The hypothesis was right about *what* fills the
+hallway (the closing step, not the data) but wrong about *how*. On real scans the wall mask is
+full of 0.5 to 1 m blobs (clutter, noisy depth near walls). They are not clean elongated walls,
+so the rule let them bridge across the hallway anyway. Without closing, the hallway is open, but
+it leaks outside through the doorways it connects.
+
+**Attempt 2, what shipped** (commit `366fa60`). The door-closing is left exactly as before.
+Instead, for a walkthrough, the space that is free in the scan itself, inside the home, not
+already a room and walked by the phone becomes a room of its own. A door also links its room to
+the room whose outline lies within 0.5 m on the other side, since a hallway's door jambs are
+often not seen.
+
+| capture | inside % | adjacent pairs | components | gate (≥ 95% and 1 component) |
+|---|---|---|---|---|
+| c00a170fe1 | 72.9 → **92.6** | 0 → **2** | 2 → **1** | fail (inside 92.6) |
+| 1a8384c3f6 | 80.8 → **96.6** | 0 → **5** | 6 → **3** | fail (3 components) |
+| c7d28f72c6 | 59.5 → **86.2** | 0 → **1** | 5 → 7 | fail |
+
+- **Against the prediction:**
+  - At least 90% of the walk inside a room: met on 2 of 3.
+  - At least 1 adjacent pair on each capture: met on 3 of 3.
+  - At most 2 components on each capture: met on 1 of 3.
+  - The gate itself still fails on all three. This is meaningful movement below the gate, not a pass.
+- **Why it fell short, from the plans:**
+  - On c7d28f72c6 the hallway comes back as two pieces, split where clutter narrows it. The
+    stretch between the middle bedroom and the two rooms on the right is still missing, so those
+    rooms stay unlinked.
+  - Walked-space outlines are ragged: their edges are not snapped to the wall directions the
+    way enclosed rooms are.
+  - Those two are the next fixes. Snap walked-space outlines to the rooms' wall frame, and merge
+    walked pieces that meet at a narrow neck.
+- **Nothing that was right got worse:**
+  - Every room the three sample plans had before is unchanged: area, walls with intervals,
+    openings and ceiling.
+  - All 14 synthetic cases are identical.
+  - Photo folders are unaffected.
+  - A new synthetic scene, `floorplan synth hall stray` (two rooms off a 1 m hallway), locks
+    this in as a test. Before the fix it gives 2 rooms, 42.9% of the walk inside a room and no
+    adjacency; after, 3 rooms, 99.0% and one connected plan.
+
+Diff: `git diff 72ab94c..366fa60 -- src/`
 
 Both runs regenerate with:
 
 ```
-git checkout <before> && uv run floorplan walkcheck <sample folders>
-git checkout <after>  && uv run floorplan walkcheck <sample folders>
+git checkout 72ab94c && uv run floorplan walkcheck ~/Downloads/c00a170fe1 ~/Downloads/1a8384c3f6 ~/Downloads/c7d28f72c6
+git checkout 366fa60 && uv run floorplan walkcheck ~/Downloads/c00a170fe1 ~/Downloads/1a8384c3f6 ~/Downloads/c7d28f72c6
 ```
