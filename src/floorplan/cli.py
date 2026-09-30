@@ -23,15 +23,16 @@ def main(argv=None):
     add_common(p)
     p.add_argument("--up", default="auto", help="up axis of the scan: auto, +y, +z, ...")
 
-    for name, hlp in (("photos", "folders of photos (one folder per capture)"),
+    for name, hlp in (("photos", "photo folders, one folder per room (2-8 photos each)"),
                       ("video", "walkthrough videos (one file per capture)")):
         p = sub.add_parser(name, help=hlp)
         add_common(p)
-        p.add_argument("--marker-size", type=float, default=0.18,
-                       help="printed ArUco marker black-square size in metres")
-        p.add_argument("--work", type=Path, help="keep intermediate SfM files here")
+        p.add_argument("--marker-size", type=float, default=None,
+                       help="optional: black-square size (m) of printed ArUco markers in view; "
+                            "overrides the model's scale")
         if name == "video":
-            p.add_argument("--fps", type=float, default=3.0, help="keyframes per second")
+            p.add_argument("--fps", type=float, default=2.0, help="keyframes per second")
+            p.add_argument("--work", type=Path, help="keep extracted keyframes here")
 
     p = sub.add_parser("markers", help="write printable ArUco markers (A4, 300 dpi)")
     p.add_argument("-o", "--out", type=Path, default=Path("markers"))
@@ -60,9 +61,9 @@ def main(argv=None):
         if a.cmd == "lidar":
             kw["up"] = a.up
         else:
-            kw.update(marker_size=a.marker_size, work=a.work)
+            kw["marker_size"] = a.marker_size
             if a.cmd == "video":
-                kw["fps"] = a.fps
+                kw.update(fps=a.fps, work=a.work)
         try:
             result = run(a.cmd, a.inputs, a.out, **kw)
         except (ValueError, RuntimeError) as e:  # capture problems: explain, don't dump a traceback
@@ -71,7 +72,7 @@ def main(argv=None):
         _summary(result)
         print(f"\nwrote {a.out / 'plan.svg'} and {a.out / 'plan.json'}")
     elif a.cmd == "markers":
-        from .sfm import write_marker_sheet
+        from .media import write_marker_sheet
         write_marker_sheet(a.out, range(a.count), a.size_mm)
         print(f"wrote {a.count} markers to {a.out}/ (use --marker-size {a.size_mm / 1000})")
     elif a.cmd == "synth":

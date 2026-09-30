@@ -80,7 +80,9 @@ def dominant_angle(segments) -> float:
 
 
 def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: float | None = None,
-                  res=0.02, min_area=1.5) -> list[Room]:
+                  res=0.02, min_area=1.5, seeds: np.ndarray | None = None) -> list[Room]:
+    """`seeds`: optional points known to be inside rooms (camera positions); rooms that
+    contain none are dropped."""
     points = np.asarray(points, float)
     points = points[np.isfinite(points).all(1)]
     if floor_z is None or ceiling_z is None:
@@ -119,25 +121,27 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
 
     # Close gaps in the wall mask; keep the gentlest setting that encloses the most floor area
     # (a leaky wall loses its whole room, over-closing only nibbles at corners and corridors).
+    # A corner nobody saw (occluded, or next to a door: common with a handful of photos) leaves
+    # an L-shaped gap that no row or column crosses. Diagonal kernels bridge it, and the edge
+    # refit below restores the corner; they over-close, so they are only a fallback.
+    seed_ij = None
+    if seeds is not None and len(seeds):
+        seed_ij = (((np.asarray(seeds)[:, :2] @ Rm.T) - origin) / res).astype(int)
     best, best_area = None, 0.0
-    for line in (0.0, 1.0, 1.4):
-        for radius in (0.06, 0.12, 0.2, 0.3):
-            k = 2 * int(radius / res) + 1
-            walls = cv2.morphologyEx(occ, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
-            if line:  # thicken first: the two sides of a doorway may sit a cell or two apart
-                n = int(line / res)
-                walls = cv2.dilate(walls, np.ones((5, 5), np.uint8))
-                walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, np.ones((1, n), np.uint8))
-                walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, np.ones((n, 1), np.uint8))
-            walls = cv2.dilate(walls, np.ones((3, 3), np.uint8))
-            flood = (1 - walls).astype(np.uint8)
-            cv2.floodFill(flood, None, (0, 0), 2)
-            interior = (flood == 1).astype(np.uint8)
-            n, labels, stats, _ = cv2.connectedComponentsWithStats(interior, connectivity=4)
-            comps = [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] * res * res >= min_area]
-            area = sum(stats[i, cv2.CC_STAT_AREA] for i in comps) * res * res
-            if area > best_area * 1.02:
-                best, best_area = (labels, comps), area
+    for diagonal in (False, True):
+        for line in (0.0, 1.0, 1.4):
+            for radius in (0.06, 0.12, 0.2, 0.3):
+                labels, comps = _enclose(occ, res, line, radius, diagonal, min_area)
+                if seed_ij is not None:  # the photographer stood inside the room
+                    h, w = labels.shape
+                    ok = (seed_ij >= 0).all(1) & (seed_ij[:, 0] < w) & (seed_ij[:, 1] < h)
+                    hit = set(labels[seed_ij[ok, 1], seed_ij[ok, 0]].tolist())
+                    comps = [i for i in comps if i in hit]
+                area = sum((labels == i).sum() for i in comps) * res * res
+                if area > best_area * 1.02:
+                    best, best_area = (labels, comps), area
+        if best is not None:
+            break
     if best is None:
         raise ValueError("no enclosed room found; the walls were not captured all the way round")
     labels, comps = best
@@ -167,6 +171,26 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
     for k, r in enumerate(rooms):
         r.name = f"Room {k + 1}"
     return rooms
+
+
+def _enclose(occ, res, line, radius, diagonal, min_area):
+    """Close gaps in the wall mask, flood-fill from outside: (labels, enclosed component ids)."""
+    k = 2 * int(radius / res) + 1
+    walls = cv2.morphologyEx(occ, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    if line:  # thicken first: the two sides of a doorway may sit a cell or two apart
+        n = int(line / res)
+        walls = cv2.dilate(walls, np.ones((5, 5), np.uint8))
+        walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, np.ones((1, n), np.uint8))
+        walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, np.ones((n, 1), np.uint8))
+        if diagonal:
+            d = np.eye(int(min(line, 0.8) / res * 0.7), dtype=np.uint8)
+            walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, d)
+            walls |= cv2.morphologyEx(walls, cv2.MORPH_CLOSE, d[::-1].copy())
+    walls = cv2.dilate(walls, np.ones((3, 3), np.uint8))
+    flood = (1 - walls).astype(np.uint8)
+    cv2.floodFill(flood, None, (0, 0), 2)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats((flood == 1).astype(np.uint8), connectivity=4)
+    return labels, [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] * res * res >= min_area]
 
 
 def _rot(a):

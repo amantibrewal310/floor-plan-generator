@@ -8,10 +8,12 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "mapanything",
     "numpy>=2.4.6",
-    "opencv-python>=5.0.0.93",
+    "opencv-python-headless>=4.10.0.84",
     "pillow>=12.3.0",
-    "pycolmap>=4.2.0",
+    "torch>=2.14.0",
+    "torchvision>=0.29.0",
     "trimesh>=5.1.0",
 ]
 
@@ -29,3 +31,6 @@ floorplan = "floorplan.cli:main"
 
 [tool.pytest.ini_options]
 markers = ["slow: runs structure-from-motion (about a minute)"]
+
+[tool.uv.sources]
+mapanything = { git = "https://github.com/facebookresearch/map-anything", rev = "3d10cf7a3016fc0f9bb13a071ee66c47b10be0d9" }
