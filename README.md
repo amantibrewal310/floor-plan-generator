@@ -1,130 +1,116 @@
 # floorplan
 
-Turn phone captures into **dimensioned, stitched floor plans** with centimetre-level accuracy.
-There are three input tiers:
+Phone captures in, a dimensioned, stitched floor plan out. Every number comes with a 90% interval.
+The plan also lists damage, what that damage may be hiding, and a scope of work.
 
-| tier | input | how scale / gravity is recovered |
+Three input tiers, one output format:
+
+| Tier | Input | Where the 3D comes from |
 |---|---|---|
-| **LiDAR** | PLY/OBJ/GLB scans (Polycam, 3D Scanner App, …) or Apple **RoomPlan** JSON | already metric; the up axis is auto-detected, then levelled with a floor-plane fit |
-| **Video** | walkthrough `.mp4`/`.mov` | sharpest keyframe per 1/3 s → COLMAP SfM (sequential matching) → ArUco markers on the floor |
-| **Photos** | a folder of photos per room | COLMAP SfM (exhaustive matching, EXIF focal prior) → ArUco markers on the floor |
+| Photos | a folder of 2 to 8 photos per room | MapAnything, a pretrained model: depth, camera poses and scale from images alone |
+| Video | one walkthrough clip | the same model on the sharpest frame of every half second |
+| LiDAR | a Stray Scanner recording (depth, poses, intrinsics) | the phone's LiDAR depth, with drift corrected |
 
-Output: `plan.svg` (a drawing with every wall length in cm, doors, areas and ceiling heights) and
-`plan.json` (vertices, wall lengths, door positions and widths in metres, plus capture statistics).
+How to capture is in [CAPTURE.md](CAPTURE.md). Which iPhone runs which tier is in [DEVICES.md](DEVICES.md).
 
-## Install and run
-
-```bash
-uv sync                                    # Python 3.11+, numpy, opencv, pycolmap, trimesh
-uv run floorplan lidar scan.ply -o out/    # or: room.json exported from RoomPlan
-uv run floorplan video walk.mp4 --marker-size 0.18 -o out/
-uv run floorplan photos living/ kitchen/ --marker-size 0.18 -o out/
-```
-
-Pass several inputs to stitch captures together (one scan, video or photo folder per capture).
-
-### Try it without a phone
-
-Synthetic scenes come with ground truth:
+## Install (clean machine, about 10 minutes plus the download)
 
 ```bash
-uv run floorplan synth apartment lidar -o data          # two separate room scans
-uv run floorplan lidar data/apartment_lidar/scan_*.ply -o out/
-uv run floorplan synth lshape video -o data             # renders a walkthrough (~4 min)
-uv run floorplan video data/lshape_video/walkthrough.mp4 --marker-size 0.2 -o out/
-uv run floorplan benchmark                              # every tier vs ground truth (~20 min)
-uv run floorplan benchmark --quick                      # LiDAR/RoomPlan only (seconds)
+curl -LsSf https://astral.sh/uv/install.sh | sh       # uv, the Python package manager
+git clone https://github.com/amantibrewal310/floor-plan-generator.git
+cd floor-plan-generator
+uv sync                                               # Python 3.11 and every dependency
+uv run floorplan setup                                # model weights, about 5 GB, once
 ```
 
-## Capturing (photo and video tiers)
+Needs a Mac with Apple silicon or a Linux machine with an NVIDIA GPU. CPU-only works, slowly.
 
-1. `uv run floorplan markers -o markers/`, then print at 100 % scale. Measure the black square
-   and pass it as `--marker-size` in metres; this measurement sets the scale of the whole plan.
-2. Lay 2–3 markers flat on the floor, about 1.5 m from where you will stand. Put one on the threshold
-   between rooms that you capture separately. It then stitches them exactly.
-3. Walk a loop about 1 m from the walls, pointing the camera across the room and holding it
-   roughly level. Keep the upper part of the walls in view, including the wall above each door.
-   Every few steps, tilt down over a marker from about 1 m away; each marker should fill 60+ px
-   of the frame in several views, because this sets the scale. Video: walk slowly. Photos: take
-   one every half step, about 40 per room, and include the markers in a third of them.
+## Run (one command per capture)
+
+```bash
+uv run floorplan photos kitchen hall bedroom -o out    # one folder per room
+uv run floorplan video IMG_1234.MOV -o out
+uv run floorplan lidar 71de12f9 -o out                 # the Stray Scanner folder
+```
+
+Each writes `out/plan.svg` (the drawing) and `out/plan.json` (everything, to
+[the schema](schema/plan.schema.json)) and prints a summary. This one is two synthetic LiDAR scans
+of a two-room flat (`floorplan synth apartment lidar`), stitched at the shared doorway:
+
+```
+R1 Room 1: 14.40 m², ceiling 260.1 [258.6, 261.7] cm
+  walls (cm, 90% interval): 400.0 [397.2, 402.9], 360.0 [357.1, 363.0], 400.0 [397.1, 403.0], 360.0 [357.1, 363.0]
+  door on R1.W2: 89.0 [87.1, 90.9] cm
+  door on R1.W4: 85.9 [84.1, 87.8] cm
+R2 Room 2: 11.81 m², ceiling 260.1 [258.6, 261.7] cm
+  walls (cm, 90% interval): 328.0 [325.2, 330.8], 359.9 [357.1, 362.8], 328.0 [325.2, 330.9], 359.9 [357.0, 362.9]
+  door on R2.W4: 91.6 [89.7, 93.5] cm
+adjacent: R1 <-> R2
+stitch: scan_1.ply: attached by matching doorway
+```
+
+Damage, concealed-damage flags and scope lines print after the rooms when there are any.
+
+Useful flags: `--marker-size 0.18` if a printed marker is in view (tightens the scale),
+`--no-drift-correction` for the ablation, `--no-damage` to skip damage detection.
+
+## Scoring against a tape measure
+
+```bash
+uv run floorplan score out/plan.json truth.json        # gates, errors, interval coverage
+uv run floorplan repeat run1/plan.json run2/plan.json  # repeatability gate
+uv run floorplan bench benchmark/manifest.json         # the whole benchmark, writes report.md
+```
+
+The ground-truth format and the benchmark layout are in [benchmark/README.md](benchmark/README.md).
+Model outputs are cached by input content, so reruns are exact. Delete `~/.cache/floorplan` to
+force the live path.
 
 ## How it works
 
 ```
-LiDAR/RoomPlan ─┐
-Video ─ keyframes ─┐                                          ┌─ stitch (shared marker │ doorway)
-Photos ────────────┴─ COLMAP SfM ─ ArUco metric+gravity frame ─┤
-                                                              └─► plan.extract_rooms ─► SVG / JSON
+photos / video frames ─ MapAnything ─┐
+                                     ├─ gravity + floor ─ drift correction ─ plan.extract_rooms ─ stitch ─ plan.json / plan.svg
+LiDAR depth + poses ─────────────────┘                                              │
+images ─ OWLv2 damage boxes ─ back-projected through each view's points ────────────┴─ damage, flags, scope
 ```
 
-Each tier produces a metric, gravity-aligned point cloud. `plan.extract_rooms` is shared by all of them:
-
-1. **Floor/ceiling** come from the dense horizontal bins in the height histogram.
-2. **Room segmentation.** Points between 1.0 m and the ceiling are rasterised at 2 cm in a grid
-   aligned with the dominant wall direction. Furniture sits below this band, and the wall above
-   each door is inside it, so rooms close off at doorways. Cells whose points span less than
-   20 cm of height are dropped as floating clutter (mis-triangulated SfM points, shelf tops).
-   Gaps are closed with small isotropic kernels plus straight line kernels, which bridge
-   doorways without rounding corners. A flood fill from outside leaves one component per room.
-   The closing setting is whichever encloses the most floor area.
-3. **Walls.** Each room contour is simplified, and its edges are snapped to the Manhattan frame.
-   The frame's angle is re-estimated from wall points, because a 0.3° error costs 1–2 cm at the
-   ends of a 5 m wall. Each edge is then **refit to the raw points**: it locks onto the first
-   dense surface outward from the room (the interior face, never the far face of a thin wall),
-   takes a robust median, and neighbouring edges are re-intersected. That last step turns a 2 cm grid into mm-level walls.
-4. **Doors** are runs of wall with no points between 1 m and 1.9 m, above the furniture, and
-   empty lower down too. Jamb positions use a density-based estimator, which is unbiased under
-   sensor noise; the outermost point is always pushed into the gap.
-5. **Stitching.** A capture that spans several rooms (one walkthrough, one multi-room scan) is
-   already in one frame. Separate captures are joined through a **shared ArUco marker** (an
-   exact rigid transform) or else through a **matching doorway**: equal widths, opposite faces
-   of one wall, offset by `--wall-thickness`, with no room overlap.
-
-Scale comes from the markers. The sub-pixel ArUco corners are biased about 0.4 % inward on
-blurred images, which would add about 2 cm over 4 m. So each marker's corners are re-derived by
-fitting lines to its four outer edges and intersecting them (`sfm.refine_corners`). Scale is the
-known side length divided by the triangulated one. The floor plane and heading come from the
-same corners.
-
-## Accuracy (synthetic benchmark)
-
-`uv run floorplan benchmark` renders each scene and runs the full pipeline for each tier. It
-then compares the result with ground truth after a rigid alignment:
-
-| case | rooms | walls | wall MAE cm | wall max cm | corner RMSE cm | area err % | doors | door MAE cm |
-|---|---|---|---|---|---|---|---|---|
-| lidar/rect | 1/1 | 4/4 | 0.03 | 0.04 | 0.02 | 0.00 | 1/1 | 0.92 |
-| lidar/apartment (2 scans, door stitch) | 2/2 | 8/8 | 0.04 | 0.05 | 0.23 | 0.01 | 3/3 | 1.19 |
-| roomplan/lshape | 1/1 | 6/6 | 0.00 | 0.01 | 0.00 | 0.00 | 1/1 | 0.56 |
-| photos/rect | 1/1 | 4/4 | 0.01 | 0.02 | 0.01 | 0.01 | 1/1 | 3.73 |
-| photos/apartment (2 captures) | 2/2 | 8/8 | 0.14 | 0.20 | 0.19 | 0.08 | 3/3 | 2.38 |
-| video/lshape | 1/1 | 6/6 | 0.10 | 0.16 | 0.09 | 0.06 | 1/1 | 0.94 |
-| video/apartment (1 walkthrough) | 2/2 | 8/8 | 0.21 | 0.40 | 0.23 | 0.11 | 3/3 | 1.71 |
-
-The LiDAR cloud has 1 cm Gaussian noise, 0.2 % outliers, furniture and a partial ceiling.
-Photos and video are ray-traced textured rooms with JPEG/codec noise. Walls come out
-sub-centimetre in every tier. Door widths from photos and video are good to about ±4 cm,
-because SfM loses features right at occlusion edges. Real captures will be worse, mainly on
-plain, textureless walls (see limitations).
+1. **3D points.** Photos and video go through MapAnything (Meta, Apache-2.0 weights). It returns a
+   metric depth map, a camera pose and intrinsics for every image. LiDAR frames are back-projected
+   with their own poses. Low-confidence LiDAR depth is dropped, which removes most glass and mirrors.
+2. **Gravity.** The average camera up gives a first guess. Floor and ceiling normals refine it.
+3. **Drift** (`drift.py`). Phone odometry drifts in heading as you walk. The walls are vertical
+   planes on two perpendicular directions, the same across the whole home. The trajectory is cut
+   into 1 m chunks, and each chunk's heading snaps to the first chunk's wall directions. Its floor is
+   levelled and it slides up to 5 cm onto walls already mapped. On a synthetic walk with 0.8°/m
+   drift this takes corner error from 7.5 cm to 2.1 cm.
+4. **Rooms** (`plan.py`). Points between 1 m and the ceiling are rasterised at 2 cm. Doorways and
+   unseen corners are closed, and flood fill leaves one region per room. Camera positions mark which
+   regions are rooms. Each edge is refit to the raw points, which gets mm-level walls out of a 2 cm
+   grid. Openings are gaps in the wall band: empty to the floor is a door, wall below and above is a
+   window. Ceiling height comes from the points above each room.
+5. **Stitching.** A walkthrough is already in one frame. Separate captures (photo folders) join at
+   matching doorways, which means equal widths on opposite faces of one wall, with no overlap.
+6. **Intervals** (`uncertainty.py`). A per-tier error model, widened for walls that were only partly
+   seen. `floorplan bench` checks that about 90% of tape measurements land inside.
+7. **Damage** (`damage.py`). OWLv2 finds water stains, mould, cracks, peeling paint and holes. Every
+   3D point remembers its pixel, so a box maps onto a wall, floor or ceiling with a metric size. Five
+   explicit rules raise concealed-damage flags, and a table turns each region into line items.
 
 ## Tests
 
 ```bash
-uv run pytest -m "not slow"   # LiDAR, RoomPlan, stitching, marker refinement (~2 s)
-uv run pytest                 # + full photo SfM case (~1 min)
+uv run pytest -m "not slow"   # about 1 minute
+uv run pytest                 # adds the full photo-tier run through MapAnything
 ```
 
 ## Limitations
 
-- **Plain, textureless walls** give sparse SfM points. The photo and video tiers need visible
-  texture on the upper walls (pictures, shelves, trim) or they fail with "no enclosed room". A
-  learned depth model aligned to the SfM points would fix that; it is not included, to keep
-  dependencies light. For blank rooms, use the LiDAR tier.
-- Rooms are assumed to have vertical walls and to be mostly Manhattan. Other angles are
-  supported, but walls shorter than about 35 cm off the main axes are dropped.
-- Openings wider than about 1.4 m with no wall above them (archways, open-plan) merge the
-  rooms on either side.
-- Doorway-based stitching relies on `--wall-thickness` (default 12 cm); markers make it exact.
-- Windows are not detected.
-- The RoomPlan parser follows the `CapturedRoom`/`CapturedStructure` Codable JSON layout
-  (column-major 4×4 transforms, `dimensions` = width, height, depth).
+- Walls are assumed vertical and mostly at right angles. Other angles work, but short off-axis
+  walls under 35 cm are dropped.
+- Openings wider than about 1.4 m with no wall above them (archways, open plan) merge the rooms on
+  either side.
+- Photo and video scale comes from the model, so without a marker those intervals are wide on
+  purpose. See DEVICES.md.
+- Damage detection is open vocabulary and untuned. Expect misses on faint stains and false hits on
+  dark patterns.

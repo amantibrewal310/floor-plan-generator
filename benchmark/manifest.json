@@ -1,0 +1,17 @@
+{
+  "captures": [
+    {"id": "flat-lidar", "tier": "lidar", "inputs": ["raw/flat/lidar/walk-1"],
+     "truth": "raw/flat/truth.json", "ablate_drift": true,
+     "competitor": {"app": "Polycam (free tier, version as installed)", "measured": "raw/flat/polycam.json"}},
+    {"id": "flat-lidar-repeat", "tier": "lidar", "inputs": ["raw/flat/lidar/walk-2"],
+     "truth": "raw/flat/truth.json", "repeat_of": "flat-lidar"},
+    {"id": "flat-video", "tier": "video", "inputs": ["raw/flat/video/walk.MOV"],
+     "truth": "raw/flat/truth.json", "ablate_drift": true},
+    {"id": "flat-photos", "tier": "photos",
+     "inputs": ["raw/flat/photos/hall", "raw/flat/photos/kitchen", "raw/flat/photos/living", "raw/flat/photos/bedroom"],
+     "truth": "raw/flat/truth.json"},
+    {"id": "damage-lidar", "tier": "lidar", "inputs": ["raw/damage/lidar/walk"], "truth": "raw/damage/truth.json"},
+    {"id": "damage-video", "tier": "video", "inputs": ["raw/damage/video/walk.MOV"], "truth": "raw/damage/truth.json"},
+    {"id": "damage-photos", "tier": "photos", "inputs": ["raw/damage/photos/study"], "truth": "raw/damage/truth.json"}
+  ]
+}

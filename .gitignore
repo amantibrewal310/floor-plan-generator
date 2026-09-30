@@ -10,8 +10,12 @@ wheels/
 .venv
 out/
 data/
-benchmark/
+# raw captures and run outputs are large: shipped as a download, not in git
+benchmark/raw/
+benchmark/out/
 markers/
 __pycache__/
 .pytest_cache/
 .DS_Store
+# real property photos and plans: private, never committed
+data/real/
