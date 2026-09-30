@@ -185,6 +185,24 @@ def test_room_seen_on_two_sides_is_not_closed_by_the_grid_border():
         assert (r.polygon >= lo - 0.05).all() and (r.polygon <= hi + 0.05).all(), r.polygon
 
 
+def test_room_seen_on_two_sides_becomes_the_rectangle_its_walls_span():
+    """A photo folder is one room: when only two walls were seen, return the rectangle they span,
+    flagged, with the two unseen walls marked as unsupported (so their intervals widen)."""
+    from floorplan.plan import extract_rooms
+    g = np.random.default_rng(0)
+    s = np.arange(0, 3.6, 0.02)
+    z = np.arange(0.0, 2.6, 0.02)
+    back = np.array([(x, 3.2, h) for x in s for h in z])
+    side = np.array([(3.6, y, h) for y in s[s <= 3.2] for h in z])
+    P = np.concatenate([back, side]) + g.normal(0, 0.005, (len(back) + len(side), 3))
+    (room,) = extract_rooms(P, floor_z=0.0, ceiling_z=2.6, seeds=np.array([[1.8, 1.6, 1.4]]), open_fallback=True)
+    assert room.extra.get("unclosed")
+    dims = np.sort(room.polygon.max(0) - room.polygon.min(0))
+    assert np.allclose(dims, [3.2, 3.6], rtol=0.06), dims
+    support = sorted(c for c, _ in room.wall_support)
+    assert support[1] < 0.5 < support[2], room.wall_support  # two walls seen, two not
+
+
 def test_webp_photos_reach_the_model(tmp_path):
     """Photos saved from the web are often .webp, which MapAnything's loader skips without a word."""
     from PIL import Image

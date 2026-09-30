@@ -39,12 +39,15 @@ def _frames_capture(name, frames, drift_correction, level=False, one_room=False,
         P, R = lidar.level(P)
         cams = cams @ R.T
     floor, _ = plan.estimate_floor_ceiling(P[:, 2])
-    rooms = plan.extract_rooms(P, floor_z=floor, seeds=cams)
+    rooms = plan.extract_rooms(P, floor_z=floor, seeds=cams, open_fallback=one_room)
     if one_room:
         rooms = [max(rooms, key=lambda r: r.area)]
         rooms[0].name = name
     cap = Capture(name, rooms)
     cap.stats = {"source": name, "frames": len(frames), "drift_correction": drift_correction}
+    if any(r.extra.get("unclosed") for r in rooms):
+        cap.stats["warning"] = (f"{name}: the photos do not show every wall, so the room is the rectangle "
+                                "the seen walls span; unseen sides are estimated (wide intervals)")
     if log:
         cap.stats["drift"] = {"chunks": len(log),
                               "final_yaw_correction_deg": log[-1]["yaw_deg"],
@@ -79,8 +82,9 @@ def image_capture(name: str, images: list[Path], marker_size: float | None, one_
                           image_views=range(len(images)), view_names=[Path(p).name for p in images])
     cap.stats.update({"images": len(images), "scale_from": how, "scale": round(scale, 4)})
     if len({recon.is_portrait(p) for p in images}) > 1:
-        cap.stats["warning"] = (f"{name}: portrait and landscape photos mixed; the model crops every image "
-                                "to one shape, so shoot a room all in landscape")
+        mixed = (f"{name}: portrait and landscape photos mixed; the model crops every image "
+                 "to one shape, so shoot a room all in landscape")
+        cap.stats["warning"] = "; ".join(filter(None, [cap.stats.get("warning"), mixed]))
     return cap
 
 

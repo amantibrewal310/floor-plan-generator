@@ -89,9 +89,10 @@ def dominant_angle(segments) -> float:
 
 
 def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: float | None = None,
-                  res=0.02, min_area=1.5, seeds: np.ndarray | None = None) -> list[Room]:
+                  res=0.02, min_area=1.5, seeds: np.ndarray | None = None, open_fallback=False) -> list[Room]:
     """`seeds`: optional points known to be inside rooms (camera positions); rooms that
-    contain none are dropped."""
+    contain none are dropped. `open_fallback`: the points are one room, so if its walls were not
+    captured all the way round, return the rectangle they span instead of failing."""
     points = np.asarray(points, float)
     points = points[np.isfinite(points).all(1)]
     if floor_z is None or ceiling_z is None:
@@ -151,11 +152,14 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
                     best, best_area = (labels, comps), area
         if best is not None:
             break
-    if best is None:
-        raise ValueError("no enclosed room found; the walls were not captured all the way round")
-    labels, comps = best
-
     polys = []
+    if best is None:
+        if not open_fallback:
+            raise ValueError("no enclosed room found; the walls were not captured all the way round")
+        polys.append(_open_rect(upper[:, :2], theta0))
+        labels, comps = None, []
+    else:
+        labels, comps = best
     for i in comps:
         mask = (labels == i).astype(np.uint8)
         cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -170,10 +174,15 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
     wall_pts = P[(P[:, 2] > 0.1) & (P[:, 2] < top)]
     rooms = []
     for poly in polys:
+        rough = poly
         poly = _refine_polygon(poly, upper[:, :2], theta)
+        if (poly is None or len(poly) < 3) and best is None:
+            poly = rough  # an open room's unseen sides have nothing to refit to
         if poly is None or len(poly) < 3:
             continue
         room = Room(poly, height=_room_height(poly, P, height))
+        if best is None:
+            room.extra["unclosed"] = True
         room.doors, room.windows = _find_openings(room, wall_pts)
         room.wall_support = [_support(a, b, upper[:, :2]) for a, b in room.edges()]
         rooms.append(room)
@@ -207,6 +216,17 @@ def _enclose(occ, res, line, radius, diagonal, min_area):
     cv2.floodFill(flood, None, (0, 0), 2)
     n, labels, stats, _ = cv2.connectedComponentsWithStats((flood == 1).astype(np.uint8), connectivity=4)
     return labels, [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] * res * res >= min_area]
+
+
+def _open_rect(xy, theta, pct=2):
+    """A room seen from a few viewpoints often shows two or three of its walls, which leaves no
+    enclosure to flood-fill. The wall points still span the room: take the rectangle they cover
+    on its axes (robust percentiles, not the extremes, so a glimpse through a door does not
+    count). Sides no wall was seen on get low wall_support, which widens their intervals."""
+    R = _rot(-theta)
+    q = xy @ R.T
+    lo, hi = np.percentile(q, pct, 0), np.percentile(q, 100 - pct, 0)
+    return np.array([lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]]) @ R
 
 
 def _rot(a):
