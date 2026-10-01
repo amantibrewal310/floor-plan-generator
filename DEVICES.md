@@ -41,6 +41,13 @@ Why the tiers differ:
 
 ## Processing machine
 
-Any Mac with Apple silicon (tested on an M5 with 16 GB) or a Linux machine with an NVIDIA GPU.
-CPU-only works but is slow. The first run downloads about 5 GB of model weights
-(`uv run floorplan setup`). Nothing is sent to any server after that.
+Any Mac with Apple silicon or a Linux machine with an NVIDIA GPU. CPU-only works but is slow.
+
+Memory: 32 GB recommended for the photo and video tiers. They were developed on an M5 with 16 GB,
+where the model (about 5 GB of weights) runs all of a capture's views in one pass: up to 60
+keyframes for a video. Under that load the 16 GB machine restarted several times, so on 16 GB run
+one capture at a time with nothing else heavy open. Every video is capped at 60 keyframes;
+`--fps 1` uses fewer for a clip under a minute. The LiDAR tier does not use the model and runs
+comfortably in 16 GB.
+
+The first run downloads about 5 GB of model weights (`uv run floorplan setup`). Nothing is sent to any server after that.
