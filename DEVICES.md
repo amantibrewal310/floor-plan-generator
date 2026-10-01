@@ -20,12 +20,13 @@ any other phone, but we only test iPhones.
 | Tier | What the pipeline gets | Gate | Interval half-width on a 4 m wall (90%) | Measured on real rooms |
 |---|---|---|---|---|
 | LiDAR | depth, pose and intrinsics every frame | walls within 2 cm | about 2 cm | pending, see benchmark/ |
-| Video | 30 fps frames, no depth, no poses | walls within 3% | about 17 cm (5 cm with a marker) | pending |
-| Photos | 2 to 8 stills per room, no depth, no poses | walls within 8% | about 27 cm (7 cm with a marker) | pending |
+| Video | 30 fps frames, no depth, no poses | walls within 3% | about 40 cm (7 cm with a marker) | pending |
+| Photos | 2 to 8 stills per room, no depth, no poses | walls within 8% | about 66 cm (10 cm with a marker) | pending |
 
 The interval column comes from the error model in `src/floorplan/uncertainty.py`. Those are priors.
-`floorplan bench` measures how often the tape measurement lands inside the interval, and the
-priors get tuned until that is about 90%. The last column fills in from that run.
+`floorplan bench` measures how often the tape measurement lands inside the interval, and
+`floorplan calibrate --write` scales the intervals until that is 90%. The last column fills in
+from that run.
 
 Why the tiers differ:
 
@@ -33,7 +34,7 @@ Why the tiers differ:
   drift in the phone's pose over a long walk, which `drift.py` corrects.
 - **Video** and **photos** get depth and camera positions from a pretrained model (MapAnything).
   The room's shape comes out well. Its absolute size depends on the model's sense of scale, which
-  can be a few percent off. More views (video) average that down. Fewer views (photos) don't, so
+  can be well off on a room it has never seen. More views (video) average that down. Fewer views (photos) don't, so
   the photo intervals are the widest.
 - A printed marker of known size replaces the model's scale with a measurement. That's why it
   tightens the photo and video intervals so much.

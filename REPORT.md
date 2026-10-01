@@ -1,7 +1,7 @@
-# Technical report (draft)
+# Technical report
 
-Sections 1 to 4 and 7 describe the system as built. Sections 5 and 6 need the real benchmark and
-say so. No number in this report comes from anywhere but a run you can repeat.
+No number in this report comes from anywhere but a run you can repeat. Numbers on the real
+benchmark are in `benchmark/out/report.md`, written by `floorplan bench`.
 
 ## 1. Architecture
 
@@ -68,56 +68,84 @@ from `test_stray_lidar_drift_correction`:
 | corrected | 4 + 4 | 2.2 cm | 2.1 cm | 3/3 |
 | no drift, corrected | 4 + 4 | 2.2 cm | 2.0 cm | 3/3 |
 
-The last row shows the correction costs nothing on a clean capture. The real ablation will be in
-`benchmark/out/report.md`.
+The last row shows the correction costs nothing on a clean capture.
+
+On the three real sample walkthroughs (no tape, so the truth-free walk check and the stitched
+footprint), drift correction on and off:
+
+| capture | walk | footprint on / off (m²) | walk inside a room on / off | components on / off |
+|---|---|---|---|---|
+| c00a170fe1 | 14 m | 17.6 / 17.7 | 92.6 / 93.9% | 1 / 1 |
+| 1a8384c3f6 | 53 m | 53.4 / 53.7 | 96.6 / 96.0% | 3 / 4 |
+| c7d28f72c6 | 98 m | 42.4 / 43.2 | 86.2 / 82.1% | 7 / 6 |
+
+ARKit drifts little over walks this short, so the correction moves the footprint by 0.5 to 1.8%.
+It helps most on the longest walk and is slightly worse on the shortest, where there is almost no
+drift to remove. Regenerate with `floorplan lidar <folder> [--no-drift-correction]` and
+`floorplan walkcheck [--no-drift-correction]`. The ablation with tape truth is in
+`benchmark/out/report.md` once the benchmark is captured.
 
 Known limit: heading snapping assumes the rooms share one right-angled frame. A room at 30° to the
 rest of the house would have its walls pulled by up to 10°, until the snap window rejects it.
 
 ## 4. Error budget
 
-1-sigma per tier, from `uncertainty.py`. These are priors, and section 6 replaces them.
+1-sigma per tier, from `uncertainty.py`. These are priors; `floorplan calibrate` scales them to the benchmark (section 5).
 
 | Source | LiDAR | Video | Photos |
 |---|---|---|---|
-| Scale (fraction of length) | 0.2% | 2.5% | 4% |
-| Each wall face (fit, grid, noise) | 5 mm | 15 mm | 25 mm |
-| Each jamb of an opening | 8 mm | 25 mm | 35 mm |
-| Ceiling (fraction of height) | 0.3% | 2.5% | 4% |
+| Scale (fraction of length) | 0.2% | 6% | 10% |
+| Each wall face (fit, grid, noise) | 5 mm | 25 mm | 40 mm |
+| Each jamb of an opening | 8 mm | 35 mm | 50 mm |
+| Ceiling (fraction of height) | 0.3% | 4% | 6% |
 | Unseen part of a wall | +25% of the unseen length, per end | same | same |
 | With a printed marker | n/a | scale 0.6% | scale 0.6% |
 
-For a 4 m wall the 90% half-widths come out as 1.8 cm, 17 cm and 27 cm (5 cm and 7 cm with a
-marker). The photo and video scale terms dominate everything else, so the useful work on those
+For a 4 m wall the 90% half-widths come out as 1.8 cm, 40 cm and 66 cm (7 cm and 10 cm with a
+marker). The photo and video priors started at 4% and 2.5% scale. On real furnished rooms outside
+the benchmark those intervals held the truth well under 90% of the time, so they were widened
+2.5x and about 2x. The photo and video scale terms dominate everything else, so the useful work on those
 tiers is on scale.
 
 ## 5. Calibration analysis
 
-Pending the real benchmark. `floorplan score` reports interval coverage per capture, the share of
-tape measurements inside their 90% interval. The target is 85 to 95%. Below that, the tier's
-constants go up. Above it, they come down. On synthetic LiDAR the coverage is 93 to 100%, but
-synthetic noise is the noise we chose, so that proves nothing about real rooms.
+A 90% interval has to contain the truth about 90% of the time. Too narrow is the expensive
+failure: a confident wrong number on thin input.
+
+**Method.** `floorplan calibrate benchmark/out` takes every measurement that has ground truth
+(wall, room area, opening width, ceiling height) and expresses its error in units of the
+interval's half-width under the prior. Per tier and quantity, the factor is the 90% quantile of
+those ratios with the split-conformal finite-sample correction (the ceil((n+1)·0.9)-th smallest of
+n). Scaling the prior's sigma by that factor puts at least 90% of the benchmark's truth inside.
+`--write` saves the factors to `src/floorplan/calibration.json`, which every later run applies, and
+each `plan.json` records the factors it was made with (`interval_calibration`), so a refit divides
+them out instead of compounding. A tier is only narrowed with 20 or more measurements; with fewer
+it can only widen.
+
+**Status.** Built and tested (`test_calibrate_widens_intervals_until_90pct_of_truth_is_inside`).
+The factors need tape-measured captures, so until the benchmark is in `benchmark/raw/` every tier
+runs at its prior (factor 1, no `calibration.json`). On real photo sets held out from development,
+a factor fitted on one set of properties carried over to another set, raising its coverage
+substantially without reaching 90%: the photo tier's errors have long tails (rooms not
+photographed all round), which a single factor can only cover by widening every interval.
 
 ## 6. Fix loop
 
-Pending: the fix loop has to start from the worst gate on the real benchmark (`FIX_LOOP.md`).
-Candidates already visible on synthetic data:
+The full declaration and result are in `FIX_LOOP.md`. In short:
 
-- LiDAR walls come out about 1.2 cm short on the Stray-format synthetic capture while the
-  PLY-format capture is unbiased. Openings measure within 2 cm on only 67% there. Both point at
-  the depth back-projection or edge refit on sparse 256x192 depth, not at the pose.
-- Photo-tier scale. On 6 synthetic renders (random confetti textures, nothing like a real room)
-  the model's scale was 39% too large without a marker. With the marker the walls came out 3 to 7%
-  long. Real photos should be much closer, but that is exactly what the benchmark has to show.
-
-Synthetic video (`floorplan synth apartment video`, 61 keyframes, printed marker in view, 3 min 45 s
-on an M5, 58 s on a cached rerun): both rooms found, doors and adjacency right, drift correction
-applied 3.3° of heading. But room 1 came out 4.19 x 3.92 m against 4.00 x 3.60 m (+5% and +9%, so
-not a single scale error) and room 2 gained a spurious jog. The ceiling was never in view. The
-renders are random confetti textures that look nothing like a room, so this says little about
-real captures. It is recorded here because it is the only video number we have so far. The same
-run exposed the damage detector firing on 14 texture patches. A region seen in one view now needs
-a score of 0.6, and 0.4 otherwise, which cut that to one.
+- **Worst gate:** the stitched plan from the sample walkthroughs was not connected. Only 59.5 to
+  80.8% of the walk fell inside any room, no two rooms were adjacent, and the hallway was missing
+  from every plan.
+- **Hypothesis, declared before the fix:** the doorway-closing kernels bridge across a hallway
+  (two parallel walls about a door's width apart) and fill it as wall.
+- **Attempt 1** (`6c8f79a`) shipped the declared change. The prediction was wrong (59.5 to 59.8%):
+  the closing was indeed what filled the hallway, but through clutter blobs rather than clean walls.
+- **Attempt 2** (`595d4da`): free, walked space inside the home that no room covers becomes a room,
+  and a door links to the room whose outline is within 0.5 m. Inside share 72.9/80.8/59.5% to
+  92.6/96.6/86.2%, adjacent pairs 0 to 2/5/1. Meaningful movement, short of the gate (95% and
+  one component); the report says why (a hallway split by clutter, ragged walked-space outlines).
+- Nothing that was right got worse: all rooms in the three sample plans and all 14 synthetic cases
+  are unchanged.
 
 ## 7. Known failure modes
 
@@ -131,3 +159,9 @@ a score of 0.6, and 0.4 otherwise, which cut that to one.
 | Open plan or archways over 1.4 m | two rooms merge into one | limitation, reported as one room |
 | Mixed portrait and landscape photos | the model crops all photos to one shape | warning in the output, protocol says landscape |
 | A corner nobody saw | the room doesn't close | diagonal gap closing as a fallback, the edge refit restores the corner |
+| A room photographed from one side (two or three walls in view) | nothing encloses | the rectangle the seen walls span, flagged `unclosed` in the output, unseen walls get low coverage and wide intervals |
+| One short shot of a small room (a bathroom) | the seen walls lie along one line | an outline smaller than 1.5 m² or narrower than 0.5 m fails with a reason instead of a 0 m² room |
+| An edited video (cuts between rooms) | keyframes from different rooms are posed as one walk; rooms come out as fragments | protocol: one continuous take. Not detected yet: cutting at scene changes and treating each shot as a separate capture is the next step |
+| A hallway narrowed by furniture | the walked hallway comes back in pieces, its outline not snapped to the walls | adjacency still links rooms through doors; merging pieces is the next fix (FIX_LOOP.md) |
+| Stray Scanner's `rgb.mp4` run through the video tier | frames are stored in sensor orientation (sideways when the phone is upright) and the camera points at the floor; the model's trajectory does not hold together and no room is found | use the LiDAR tier for Stray recordings; the video tier expects the Camera app's video, which carries its rotation |
+| A bed or sofa hiding most of the floor | the largest horizontal layer is the furniture top, not the floor | floor = the lowest layer at least two views agree on |

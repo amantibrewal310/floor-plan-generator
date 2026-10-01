@@ -12,17 +12,18 @@ runs but the number the spec asks for only exists once real captures are in `ben
 | Photo tier: per-room folders stitch into one plan | `stitch.py` | doorway matching, overlap penalty | done on synthetic data; real stitch pending |
 | Video tier: handheld walkthrough | `media.py`, `recon.py` | `floorplan video <clip>` | done; HEVC .MOV decode checked |
 | LiDAR tier: depth, poses, intrinsics | `lidar.py` (`load_stray`) | `floorplan lidar <stray folder>` | done (`test_stray_lidar_drift_correction`) |
-| Per-room plan: walls, ceiling height, floor area, openings | `plan.py`, `export.py` | `plan.json` rooms[] | done |
+| Per-room plan: walls, ceiling height, floor area, openings | `plan.py`, `export.py` | `plan.json` rooms[] | done; a sliver or zero-area outline fails with a reason (`test_walls_along_one_line_are_not_a_room`) |
 | Windows as openings | `plan.py` (`_find_openings`) | openings[].type = window | done; no synthetic windows yet |
 | Stitched multi-room plan with adjacency | `stitch.py`, `export.adjacency` | `plan.json` adjacency[], `plan.svg` | done |
 | Damage regions per surface, class and metric extent | `damage.py` | damage[] | built, needs real data (`test_damage_lands_on_surface...`) |
 | Concealed-damage flags with the rule that fired | `damage.py` (`RULES`) | concealed_flags[] | done |
 | Scope line items keyed to surfaces | `damage.py` (`SCOPE`) | scope[] | done |
-| Confidence interval on every measurement | `uncertainty.py` | every number is {value, lo, hi} | done; calibration needs real data |
+| Confidence interval on every measurement | `uncertainty.py` | every number is {value, lo, hi} | done (`test_output_matches_published_schema`) |
+| Calibrated intervals (90% means 90%) | `calibrate.py`, `floorplan calibrate --write` | `src/floorplan/calibration.json`, factor per tier and quantity | built (`test_calibrate_widens_intervals_until_90pct_of_truth_is_inside`); photo/video priors widened 2.5x and 2x (REPORT §4); fitted factors need the benchmark |
 | One command per capture | `cli.py` | `floorplan <tier> ... -o out` | done |
 | JSON to a published schema | `schema/plan.schema.json` | validated in `test_output_matches_published_schema` | done |
 | Rendered plan | `export.write_svg` | `plan.svg` with ± on dimensions, windows, damage marks | done |
-| Drift handling, with ablation | `drift.py`, `--no-drift-correction` | bench report "Drift ablation" | done on synthetic drift; real ablation pending |
+| Drift handling, with ablation | `drift.py`, `--no-drift-correction` | bench report "Drift ablation"; REPORT §3 | done: synthetic drift and the three sample walkthroughs, on and off (REPORT §3) |
 | Opening width gate (2 cm on 85%, missed/phantom count) | `evaluate.py` | `floorplan score` | built, needs real data |
 | Ceiling gate and bias vs spread | `evaluate.py` | ceiling_mae_cm, ceiling_bias_cm | built, needs real data |
 | Repeatability gate | `evaluate.py` (`repeatability`) | `floorplan repeat`, bench table | built, needs real data |
@@ -33,8 +34,9 @@ runs but the number the spec asks for only exists once real captures are in `ben
 | Benchmark report with timing | `bench.py` | `benchmark/out/report.md` | built, needs captures |
 | Reproduction bundle, deterministic cache plus live path | `recon.predict` cache, `floorplan bench` | `~/.cache/floorplan/*.npz` | done |
 | Weights fetched by script | `floorplan setup` | about 5 GB into ~/.cache | done |
-| Fix loop: declaration, before/after, diff | `FIX_LOOP.md` | | not started (needs the real benchmark's worst gate) |
-| Technical report, max 6 pages | `REPORT.md` | | draft; results sections need real data |
+| Fix loop: declaration, before/after, diff | `FIX_LOOP.md` | declared in `c2528cd`, fix in `595d4da`, `git diff c2528cd..595d4da -- src/` | done: worst gate on the sample walkthroughs (rooms connected), meaningful movement short of the gate, explained |
+| Whole-plan check without tape | `evaluate.walk_check`, `floorplan walkcheck` | share of the walk inside a room, adjacency components | done (`test_walkcheck_on_a_synthetic_walkthrough`) |
+| Technical report, max 6 pages | `REPORT.md` | | done; benchmark numbers fill in from `benchmark/out/report.md` |
 | Raw benchmark data | `benchmark/raw/` download | | needs captures |
 | Mirrors, glass, wet-look surfaces, low light | `CAPTURE.md`, `lidar.load_stray` confidence filter, `REPORT.md` | | protocol and LiDAR filter done; measured behaviour pending |
-| Process evidence | git history | | ongoing |
+| Process evidence | git history | | done: committed as built, fix loop declared before the fix |

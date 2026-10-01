@@ -60,6 +60,8 @@ Useful flags: `--marker-size 0.18` if a printed marker is in view (tightens the 
 uv run floorplan score out/plan.json truth.json        # gates, errors, interval coverage
 uv run floorplan repeat run1/plan.json run2/plan.json  # repeatability gate
 uv run floorplan bench benchmark/manifest.json         # the whole benchmark, writes report.md
+uv run floorplan calibrate benchmark/out --write       # fit the 90% intervals to the benchmark's truth
+uv run floorplan walkcheck <stray folders>             # no tape: share of the walk inside a room
 ```
 
 The ground-truth format and the benchmark layout are in [benchmark/README.md](benchmark/README.md).
@@ -112,5 +114,9 @@ uv run pytest                 # adds the full photo-tier run through MapAnything
   either side.
 - Photo and video scale comes from the model, so without a marker those intervals are wide on
   purpose. See DEVICES.md.
+- A room photographed from one side comes out as the rectangle its seen walls span, flagged
+  `unclosed`, with wide intervals on the unseen walls. Photograph every wall.
+- Video must be one continuous take. An edited video with cuts between rooms is posed as one walk
+  and comes out in fragments.
 - Damage detection is open vocabulary and untuned. Expect misses on faint stains and false hits on
   dark patterns.
