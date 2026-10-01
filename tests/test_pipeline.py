@@ -285,3 +285,27 @@ def test_walls_along_one_line_are_not_a_room():
     with pytest.raises(ValueError, match="do not outline a room"):
         extract_rooms(P, floor_z=0.0, ceiling_z=2.6, seeds=np.array([[1.2, 0.4, 1.4]]), open_fallback=True)
 
+
+def test_calibrate_widens_intervals_until_90pct_of_truth_is_inside(tmp_path, monkeypatch):
+    from floorplan import calibrate, uncertainty
+    from floorplan.uncertainty import ErrorModel
+    # 30 walls with half-width 0.1 m, off by 0.01 .. 0.30 m: errors of 0.1 .. 3.0 half-widths
+    walls = [{"id": f"R1.W{i}", "length_m": {"value": 3.0, "lo": 2.9, "hi": 3.1}} for i in range(30)]
+    plan = {"tier": "photos", "interval_calibration": {"wall": 1.0},
+            "rooms": [{"id": "R1", "walls": walls, "openings": [], "floor_area_m2": None, "ceiling_height_m": None}]}
+    sc = {"walls": [{"wall": f"R1.W{i}", "truth": 3.0 + 0.01 * (i + 1)} for i in range(30)],
+          "areas": [], "ceilings": [], "openings": []}
+    (tmp_path / "results.json").write_text(json.dumps({"a": {"plan": plan, "score": sc}}))
+    monkeypatch.setattr(uncertainty, "CALIBRATION", tmp_path / "calibration.json")
+    cal = calibrate.calibrate([tmp_path], write=True)
+    assert cal["tiers"]["photos"]["wall"] == pytest.approx(2.8)  # ceil(31 * 0.9) = 28th of 30
+    k = ErrorModel("photos").k
+    assert k["wall"] == pytest.approx(2.8) and k["area"] == 1.0
+    # plans already made with a factor: it is divided out, so refitting does not compound
+    plan["interval_calibration"] = {"wall": 2.0}
+    for w in walls:
+        w["length_m"].update(lo=2.8, hi=3.2)
+    (tmp_path / "results.json").write_text(json.dumps({"a": {"plan": plan, "score": sc}}))
+    assert calibrate.calibrate([tmp_path])["tiers"]["photos"]["wall"] == pytest.approx(2.8)
+    # too few measurements to narrow: a factor below 1 is not trusted
+    assert calibrate.fit([0.1] * 5) == 1.0 and calibrate.fit([0.5] * 25) == 0.5

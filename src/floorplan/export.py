@@ -19,7 +19,7 @@ def to_dict(rooms: list[Room], meta: dict | None = None, tier="lidar", marker_sc
     """The published output (schema/plan.schema.json). Every measurement is a 90% interval."""
     em = ErrorModel(tier, marker_scale)
     out = {"schema_version": SCHEMA_VERSION, "units": "metres", "tier": tier, "interval": "90%",
-           "rooms": [], "damage": [], "concealed_flags": [], "scope": [], **(meta or {})}
+           "interval_calibration": dict(em.k), "rooms": [], "damage": [], "concealed_flags": [], "scope": [], **(meta or {})}
     for k, r in enumerate(rooms):
         rid = f"R{k + 1}"
         edges = r.edges()

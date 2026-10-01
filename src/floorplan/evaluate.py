@@ -106,14 +106,14 @@ def score(plan: dict, gt: dict) -> dict:
         if g.get("ceiling_m") is not None:
             m = r["ceiling_height_m"]
             e = None if m is None else m["value"] - g["ceiling_m"]
-            ceilings.append({"room": g["name"], "truth": g["ceiling_m"], "pred": m and m["value"], "err": e,
+            ceilings.append({"room": g["name"], "id": r.get("id"), "truth": g["ceiling_m"], "pred": m and m["value"], "err": e,
                              "pass": e is not None and abs(e) <= GATES["ceiling"]})
             if m:
                 cover.append(_inside(m, g["ceiling_m"]))
         ga = _gt_area(g)
         if ga:
             m = r["floor_area_m2"]
-            areas.append({"room": g["name"], "truth": ga, "pred": m["value"], "err_pct": 100 * (m["value"] - ga) / ga})
+            areas.append({"room": g["name"], "id": r.get("id"), "truth": ga, "pred": m["value"], "err_pct": 100 * (m["value"] - ga) / ga})
             cover.append(_inside(m, ga))
         # openings: greedy by width within each type; leftovers on either side are misses.
         # No "openings" key means they were not measured (e.g. sizes read off a floor plan), so none are scored.
@@ -127,7 +127,7 @@ def score(plan: dict, gt: dict) -> dict:
                 o = min(pws, key=lambda o: abs(o["width_m"]["value"] - t))
                 pws.remove(o)
                 e = o["width_m"]["value"] - t
-                openings.append({"room": g["name"], "type": kind, "truth": t, "pred": o["width_m"]["value"],
+                openings.append({"room": g["name"], "id": o.get("id"), "type": kind, "truth": t, "pred": o["width_m"]["value"],
                                  "err": e, "pass": abs(e) <= GATES["opening"][0]})
                 cover.append(_inside(o["width_m"], t))
             for o in pws:  # phantom

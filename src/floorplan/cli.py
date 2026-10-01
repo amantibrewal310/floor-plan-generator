@@ -57,6 +57,10 @@ def main(argv=None):
     p.add_argument("-o", "--out", type=Path)
     p.add_argument("--no-damage", action="store_true")
 
+    p = sub.add_parser("calibrate", help="fit the 90%% intervals to a benchmark's ground truth")
+    p.add_argument("results", nargs="+", type=Path, help="`floorplan bench` output folders or results.json")
+    p.add_argument("--write", action="store_true", help="save the factors to calibration.json (used by every run)")
+
     sub.add_parser("setup", help="download the model weights (about 5 GB, once)")
 
     p = sub.add_parser("markers", help="write printable ArUco markers (A4, 300 dpi)")
@@ -124,6 +128,9 @@ def main(argv=None):
     elif a.cmd == "bench":
         from .bench import run_bench
         run_bench(a.manifest, a.out, damage=not a.no_damage)
+    elif a.cmd == "calibrate":
+        from .calibrate import calibrate
+        calibrate(a.results, write=a.write)
     elif a.cmd == "setup":
         from . import damage, recon
         print(f"fetching {recon.MODEL_ID} (3D reconstruction) ...", flush=True)
