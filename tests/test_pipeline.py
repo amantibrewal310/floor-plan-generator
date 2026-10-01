@@ -273,3 +273,15 @@ def test_floor_found_when_a_bed_hides_most_of_it():
         views.append(np.concatenate([bed, floor]))
     views.append(rng.normal(-1.9, 0.01, 200))  # one view with a reflection below the floor
     assert abs(floor_from_views(views) - (-1.30)) < 0.01
+
+
+def test_walls_along_one_line_are_not_a_room():
+    """One short shot of a bathroom can show a single wall. The rectangle its points span is a
+    sliver of zero area: fail with a reason instead of reporting a 0 m² room."""
+    from floorplan.plan import extract_rooms
+    s = np.arange(0, 2.4, 0.02)
+    z = np.arange(0.0, 2.6, 0.02)
+    P = np.array([(x, 1.2, h) for x in s for h in z])
+    with pytest.raises(ValueError, match="do not outline a room"):
+        extract_rooms(P, floor_z=0.0, ceiling_z=2.6, seeds=np.array([[1.2, 0.4, 1.4]]), open_fallback=True)
+

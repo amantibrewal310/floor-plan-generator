@@ -226,7 +226,7 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
         poly = _refine_polygon(poly, upper[:, :2], theta)
         if (poly is None or len(poly) < 3) and best is None:
             poly = rough  # an open room's unseen sides have nothing to refit to
-        if poly is None or len(poly) < 3:
+        if poly is None or len(poly) < 3 or not _usable(poly, min_area):
             continue
         room = Room(poly, height=_room_height(poly, P, height, None if ceiling_pts is None
                                               else ceiling_pts - [0, 0, floor_z]))
@@ -235,10 +235,25 @@ def extract_rooms(points: np.ndarray, floor_z: float | None = None, ceiling_z: f
         room.doors, room.windows = _find_openings(room, wall_pts)
         room.wall_support = [_support(a, b, upper[:, :2]) for a, b in room.edges()]
         rooms.append(room)
+    if not rooms:
+        raise ValueError(f"the walls seen do not outline a room (smaller than {min_area} m² or narrower "
+                         f"than {MIN_WIDTH} m); capture every wall of the room")
     rooms.sort(key=lambda r: -r.area)
     for k, r in enumerate(rooms):
         r.name = f"Room {k + 1}"
     return rooms
+
+
+MIN_WIDTH = 0.5  # narrower than this nobody walks in it: a sliver, not a room
+
+
+def _usable(poly, min_area) -> bool:
+    """A room, not a sliver. An open room whose seen walls lie along one line, or a refit that
+    folded the outline over itself, leaves a zero or negative area polygon."""
+    if _signed_area(poly) < min_area:
+        return False
+    (_, (w, h), _) = cv2.minAreaRect(np.asarray(poly, np.float32))
+    return min(w, h) >= MIN_WIDTH
 
 
 def _enclose(occ, res, line, radius, diagonal, min_area):
